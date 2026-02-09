@@ -1,0 +1,22 @@
+{
+  "name": "myhealthvault-backend",
+  "version": "1.0.0",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "echo \"No linting configured\""
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "firebase-admin": "^12.3.1",
+    "firebase-functions": "^7.0.0",
+    "pdfkit": "^0.13.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  },
+  "private": true
+}

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "types": ["node"],           // ✔ Only Node types
+    "moduleResolution": "node",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,        // 🔥 KEY FIX: prevents RN / Expo type conflicts
+    "forceConsistentCasingInFileNames": true,
+    "rootDir": "src",
+    "outDir": "lib"
+  },
+  "include": ["src/**/*"],
+  "exclude": [
+    "../node_modules",
+    "../../node_modules",
+    "**/*.spec.ts",
+    "**/__tests__/**"
+  ]
+}

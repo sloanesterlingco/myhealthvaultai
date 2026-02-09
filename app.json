@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "MyHealthVaultAI",
+    "slug": "myhealthvaultai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/app_icon_1024.png",
+    "scheme": "myhealthvaultai",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/images/splash_icon_1200.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A2640"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/android_adaptive_foreground.png",
+        "backgroundImage": "./assets/images/android_adaptive_background.png"
+      },
+      "package": "com.sterlingco.myhealthvaultai"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Allow MyHealthVaultAI to access your microphone for recording voice notes and medical history."
+      }
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b21d9fb3-11b1-4075-bc60-eb3568721f8c"
+      }
+    },
+    "plugins": [
+      "expo-speech-recognition"
+    ]
+  }
+}
