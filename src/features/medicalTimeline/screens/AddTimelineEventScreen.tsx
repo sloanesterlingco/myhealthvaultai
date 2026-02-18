@@ -11,7 +11,7 @@ import { Button } from "../../../ui/Button";
 import { theme } from "../../../theme";
 
 import { timelineService } from "../services/timelineService";
-import type { TimelineEventType } from "../services/timelineTypes";
+import type { TimelineCategory, TimelineEventType } from "../services/timelineTypes";
 
 function normalizeType(raw: string): TimelineEventType {
   const t = (raw || "").trim().toUpperCase();
@@ -19,6 +19,20 @@ function normalizeType(raw: string): TimelineEventType {
   if (t === "SAFETY_ALERT") return "SAFETY_ALERT";
   if (t === "VITAL") return "VITAL";
   return "GENERAL";
+}
+
+function normalizeCategory(raw: string): TimelineCategory {
+  const c = (raw || "").trim().toLowerCase();
+  if (c === "records" || c === "record") return "records";
+  if (c === "vitals" || c === "vital") return "vitals";
+  if (c === "meds" || c === "medications" || c === "medication") return "medications";
+  if (c === "labs" || c === "lab") return "labs";
+  if (c === "imaging" || c === "images" || c === "radiology") return "imaging";
+  if (c === "visits" || c === "visit" || c === "ai") return "visits";
+  if (c === "insurance" || c === "card") return "insurance";
+  if (c === "exports" || c === "export" || c === "pdf" || c === "qr") return "exports";
+  if (c === "warnings" || c === "warning" || c === "alerts" || c === "alert") return "warnings";
+  return "other";
 }
 
 function formatMdy(d: Date) {
@@ -39,6 +53,7 @@ export default function AddTimelineEventScreen() {
   const navigation = useNavigation<any>();
 
   const [type, setType] = useState<TimelineEventType>("GENERAL");
+  const [category, setCategory] = useState<TimelineCategory>("records");
 
   // ✅ Real Date object, default = today
   const [dateObj, setDateObj] = useState<Date>(new Date());
@@ -70,6 +85,7 @@ export default function AddTimelineEventScreen() {
 
       await timelineService.addEvent({
         type,
+        category,
         summary: summary.trim(),
         detail: detail.trim() ? detail.trim() : undefined,
         notes: notes.trim() ? notes.trim() : null,
@@ -107,12 +123,31 @@ export default function AddTimelineEventScreen() {
           <Text style={styles.helperStrong}>VITAL</Text>
         </Text>
 
+        <Text style={styles.helper}>
+          Categories: <Text style={styles.helperStrong}>records</Text>,{" "}
+          <Text style={styles.helperStrong}>vitals</Text>,{" "}
+          <Text style={styles.helperStrong}>medications</Text>,{" "}
+          <Text style={styles.helperStrong}>labs</Text>,{" "}
+          <Text style={styles.helperStrong}>imaging</Text>,{" "}
+          <Text style={styles.helperStrong}>visits</Text>,{" "}
+          <Text style={styles.helperStrong}>insurance</Text>,{" "}
+          <Text style={styles.helperStrong}>exports</Text>
+        </Text>
+
         <Input
           label="Type"
           value={type}
           onChangeText={(v) => setType(normalizeType(v))}
           placeholder="GENERAL / AI_NOTE / SAFETY_ALERT / VITAL"
           autoCapitalize="characters"
+        />
+
+        <Input
+          label="Category"
+          value={category}
+          onChangeText={(v) => setCategory(normalizeCategory(v))}
+          placeholder="records / vitals / medications / labs / imaging / visits / insurance / exports"
+          autoCapitalize="none"
         />
 
         {/* ✅ Date picker field */}

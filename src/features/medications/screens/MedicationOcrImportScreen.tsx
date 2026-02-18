@@ -1,14 +1,4 @@
 // src/features/medications/screens/MedicationOcrImportScreen.tsx
-//
-// V1 Medication Label Scan (camera-first)
-// Flow:
-// 1) Take photo of medication label
-// 2) OCR -> raw text (Cloud Function via runOCR)
-// 3) Propose medication fields from OCR text
-// 4) Continue -> MedicationOcrReviewScreen (user confirms/edits + saves)
-//
-// IMPORTANT: Assistive only. User must confirm before saving.
-
 import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -43,18 +33,22 @@ async function preprocessToJpeg(uri: string): Promise<string> {
   const result = await ImageManipulator.manipulateAsync(
     uri,
     [{ resize: { width: 1600 } }],
-    { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+    { compress: 0.85, format: ImageManipulator.SaveFormat.JPEG }
   );
   return result.uri;
 }
 
-function MedicationOcrImportScreen() {
+async function uriToBase64(uri: string): Promise<string> {
+  return await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+}
+
+export default function MedicationOcrImportScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<any>();
 
-  // declared in types.ts; safe fallback
   const documentType = route.params?.documentType ?? "medication_label";
-
   const patientId = auth.currentUser?.uid ?? null;
 
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -68,97 +62,114 @@ function MedicationOcrImportScreen() {
   const canContinue = useMemo(() => {
     if (!patientId) return false;
     if (!candidate?.displayName?.trim()) return false;
-    if (loadingOcr) return false;
     return true;
-  }, [patientId, candidate, loadingOcr]);
+  }, [patientId, candidate]);
 
-  const requestCameraPermission = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert(
-        "Camera permission needed",
-        "Please allow camera access to scan medication labels."
-      );
-      return false;
+  const pickImage = async () => {
+    setError(null);
+    setCandidate(null);
+
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Permission needed", "Please allow photo library access.");
+      return;
     }
-    return true;
+
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 1,
+    });
+
+    if (res.canceled) return;
+
+    const uri = res.assets?.[0]?.uri;
+    if (!uri) return;
+
+    setImageUri(uri);
   };
 
   const takePhoto = async () => {
     setError(null);
-
-    const ok = await requestCameraPermission();
-    if (!ok) return;
-
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.85,
-      allowsEditing: true,
-    });
-
-    if (result.canceled) return;
-
-    const uri = result.assets?.[0]?.uri;
-    if (!uri) return;
-
-    setImageUri(uri);
-    setOcrText("");
     setCandidate(null);
 
-    await runOcr(uri);
-  };
-
-  const runOcr = async (uriOverride?: string) => {
-    setError(null);
-
-    const uri = uriOverride ?? imageUri;
-    if (!uri) {
-      setError("Please take a photo first.");
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert("Permission needed", "Please allow camera access.");
       return;
     }
 
-    if (!patientId) {
-      setError("You are not signed in.");
+    const res = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      quality: 1,
+    });
+
+    if (res.canceled) return;
+
+    const uri = res.assets?.[0]?.uri;
+    if (!uri) return;
+
+    setImageUri(uri);
+  };
+
+  const run = async () => {
+    if (!imageUri) {
+      Alert.alert("No image", "Please select or take a photo first.");
       return;
     }
 
     try {
       setLoadingOcr(true);
+      setError(null);
 
-      const jpegUri = await preprocessToJpeg(uri);
-      const base64 = await FileSystem.readAsStringAsync(jpegUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const jpegUri = await preprocessToJpeg(imageUri);
+      const base64 = await uriToBase64(jpegUri);
 
-      const resp = await runOCR({
+      const res = await runOCR({
         fileBase64: base64,
         mimeType: "image/jpeg",
-        fileName: "medication_label.jpg",
+        sourceType: "image",
         documentType,
-        sourceType: "medication_import",
+        fileName: "medication.jpg",
       });
 
-      const text = (resp?.text || "").toString().trim();
+      const text = (res?.text || "").trim();
       setOcrText(text);
 
       if (!text || text.length < 15) {
-        setCandidate(null);
-        setError("Could not read text clearly. Try retaking with better lighting.");
+        setCandidate({
+          displayName: "",
+          strength: "",
+          directions: "",
+          pharmacy: "",
+          rxNumber: "",
+          rawOcrText: text || "",
+          confidence: "low",
+
+          // extra fields (optional)
+          pharmacyPhone: "",
+          ndc: "",
+          quantity: "",
+          refills: "",
+          fillDate: "",
+          prescriber: "",
+          patientName: "",
+        } as any);
+
+        setError(
+          "OCR text was weak/empty. You can still type the medication name and continue."
+        );
         return;
       }
 
       const proposed = proposeMedicationFromOcr(text);
 
-      // Ensure raw text always travels forward
       const merged: MedicationOcrCandidate = {
         ...proposed,
-        rawOcrText: proposed?.rawOcrText || text,
-      } as any;
+        rawOcrText: proposed.rawOcrText || text,
+      };
 
       setCandidate(merged);
-
-      if (!merged?.displayName) {
-        setError("Could not detect a medication name. You can still edit it on the next screen.");
-      }
     } catch (e: any) {
       console.log("Medication OCR error:", e);
       setError(e?.message ?? "OCR failed. Please try again.");
@@ -167,272 +178,201 @@ function MedicationOcrImportScreen() {
     }
   };
 
-  const updateCandidate = (patch: Partial<MedicationOcrCandidate>) => {
-    setCandidate((prev) => {
-      if (!prev) {
-        return {
-          displayName: "",
-          rawOcrText: ocrText || "",
-          confidence: "low",
-          ...patch,
-        } as any;
-      }
-      return { ...prev, ...patch } as any;
-    });
-  };
-
-  const continueToReview = () => {
+  const goToReview = () => {
     if (!candidate?.displayName?.trim()) {
       Alert.alert("Missing medication name", "Please enter a medication name.");
       return;
     }
 
-    navigation.navigate(MainRoutes.MEDICATION_OCR_REVIEW, {
-      result: {
-        ...candidate,
-        displayName: candidate.displayName.trim(),
-        strength: candidate.strength?.trim() || "",
-        directions: candidate.directions?.trim() || "",
-        pharmacy: candidate.pharmacy?.trim() || "",
-        rxNumber: candidate.rxNumber?.trim() || "",
-        rawOcrText: candidate.rawOcrText || ocrText || "",
-        confidence: candidate.confidence || "low",
-        imageUri: imageUri || null, // optional, if you want to show it later
-      },
-    } as any);
+    navigation.navigate(
+      MainRoutes.MEDICATION_OCR_REVIEW,
+      {
+        result: {
+          ...candidate,
+          displayName: candidate.displayName.trim(),
+          strength: candidate.strength?.trim() || "",
+          directions: candidate.directions?.trim() || "",
+          pharmacy: candidate.pharmacy?.trim() || "",
+          rxNumber: candidate.rxNumber?.trim() || "",
+
+          // ✅ NEW: pass through extra label fields
+          pharmacyPhone: candidate.pharmacyPhone?.trim() || "",
+          ndc: candidate.ndc?.trim() || "",
+          quantity: candidate.quantity?.trim() || "",
+          refills: candidate.refills?.trim() || "",
+          fillDate: candidate.fillDate?.trim() || "",
+          prescriber: candidate.prescriber?.trim() || "",
+          patientName: candidate.patientName?.trim() || "",
+
+          rawOcrText: candidate.rawOcrText || ocrText || "",
+          confidence: candidate.confidence || "low",
+          imageUri: imageUri || null,
+        },
+      } as any
+    );
   };
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backText}>← Back</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.back}>Back</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>Scan Medication Label</Text>
-          <View style={{ width: 60 }} />
+          <Text style={styles.title}>Import Medication Label</Text>
+          <View style={{ width: 44 }} />
         </View>
 
-        <Text style={styles.subtitle}>
-          Take a clear photo of the label. You’ll review and save on the next screen.
-        </Text>
+        <View style={{ height: 12 }} />
 
-        <View style={styles.row}>
-          <TouchableOpacity
-            style={[styles.primaryButton, loadingOcr && styles.disabled]}
-            onPress={takePhoto}
-            disabled={loadingOcr}
-          >
-            <Text style={styles.primaryButtonText}>
-              {imageUri ? "Retake Photo" : "Take Photo"}
-            </Text>
+        <View style={styles.actionsRow}>
+          <TouchableOpacity style={styles.actionBtn} onPress={takePhoto}>
+            <Text style={styles.actionText}>Take Photo</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.secondaryButton, (!imageUri || loadingOcr) && styles.disabled]}
-            onPress={() => runOcr()}
-            disabled={!imageUri || loadingOcr}
-          >
-            <Text style={styles.secondaryButtonText}>
-              {loadingOcr ? "OCR..." : "Run OCR"}
-            </Text>
+          <TouchableOpacity style={styles.actionBtn} onPress={pickImage}>
+            <Text style={styles.actionText}>Choose Photo</Text>
           </TouchableOpacity>
         </View>
+
+        <View style={{ height: 12 }} />
 
         {imageUri ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Photo</Text>
+          <View style={styles.previewWrap}>
             <Image source={{ uri: imageUri }} style={styles.preview} />
           </View>
-        ) : null}
+        ) : (
+          <View style={styles.emptyPreview}>
+            <Text style={styles.emptyPreviewText}>No image selected</Text>
+          </View>
+        )}
+
+        <View style={{ height: 12 }} />
+
+        <TouchableOpacity
+          style={[styles.primaryBtn, loadingOcr ? { opacity: 0.7 } : null]}
+          onPress={run}
+          disabled={loadingOcr}
+        >
+          {loadingOcr ? (
+            <View style={styles.rowCenter}>
+              <ActivityIndicator />
+              <Text style={[styles.primaryBtnText, { marginLeft: 8 }]}>
+                Scanning…
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.primaryBtnText}>Run OCR</Text>
+          )}
+        </TouchableOpacity>
 
         {error ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
+          <Text style={styles.errorText}>{error}</Text>
         ) : null}
 
-        {candidate ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>
-              Review (quick) • {candidate.confidence?.toUpperCase?.() ?? "LOW"} confidence
-            </Text>
+        <View style={{ height: 12 }} />
 
-            <Text style={styles.label}>Medication name</Text>
-            <TextInput
-              value={candidate.displayName}
-              onChangeText={(v) => updateCandidate({ displayName: v })}
-              placeholder="e.g., Lisinopril"
-              placeholderTextColor="#777"
-              style={styles.input}
-              editable={!loadingOcr}
-            />
+        <Text style={styles.label}>Medication name</Text>
+        <TextInput
+          style={styles.input}
+          value={candidate?.displayName ?? ""}
+          onChangeText={(t) =>
+            setCandidate((prev) =>
+              prev
+                ? { ...prev, displayName: t }
+                : ({
+                    displayName: t,
+                    strength: "",
+                    directions: "",
+                    pharmacy: "",
+                    rxNumber: "",
+                    rawOcrText: ocrText || "",
+                    confidence: "low",
+                  } as any)
+            )
+          }
+          placeholder="e.g., PROGESTERONE"
+        />
 
-            <Text style={styles.label}>Strength</Text>
-            <TextInput
-              value={candidate.strength ?? ""}
-              onChangeText={(v) => updateCandidate({ strength: v })}
-              placeholder="e.g., 10 mg"
-              placeholderTextColor="#777"
-              style={styles.input}
-              editable={!loadingOcr}
-            />
+        <View style={{ height: 12 }} />
 
-            <Text style={styles.label}>Directions</Text>
-            <TextInput
-              value={candidate.directions ?? ""}
-              onChangeText={(v) => updateCandidate({ directions: v })}
-              placeholder="e.g., Take 1 tablet by mouth daily"
-              placeholderTextColor="#777"
-              style={[styles.input, styles.multiline]}
-              multiline
-              editable={!loadingOcr}
-            />
+        <TouchableOpacity
+          style={[styles.secondaryBtn, !canContinue ? { opacity: 0.5 } : null]}
+          onPress={goToReview}
+          disabled={!canContinue}
+        >
+          <Text style={styles.secondaryBtnText}>Continue to Review</Text>
+        </TouchableOpacity>
 
-            <View style={styles.splitRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Rx #</Text>
-                <TextInput
-                  value={candidate.rxNumber ?? ""}
-                  onChangeText={(v) => updateCandidate({ rxNumber: v })}
-                  placeholder="Rx number"
-                  placeholderTextColor="#777"
-                  style={styles.input}
-                  editable={!loadingOcr}
-                />
-              </View>
-
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Pharmacy</Text>
-                <TextInput
-                  value={candidate.pharmacy ?? ""}
-                  onChangeText={(v) => updateCandidate({ pharmacy: v })}
-                  placeholder="Pharmacy (optional)"
-                  placeholderTextColor="#777"
-                  style={styles.input}
-                  editable={!loadingOcr}
-                />
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={[styles.continueButton, !canContinue && styles.disabled]}
-              onPress={continueToReview}
-              disabled={!canContinue}
-            >
-              {loadingOcr ? (
-                <ActivityIndicator />
-              ) : (
-                <Text style={styles.continueText}>Continue to Review & Save</Text>
-              )}
-            </TouchableOpacity>
-
-            <View style={styles.rawCard}>
-              <Text style={styles.rawTitle}>Raw OCR Text</Text>
-              <Text style={styles.rawText}>{candidate.rawOcrText || ocrText}</Text>
-            </View>
-          </View>
-        ) : null}
+        <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-export default MedicationOcrImportScreen;
-export { MedicationOcrImportScreen };
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#0B0B0B" },
-  container: { padding: 16, paddingBottom: 40 },
-
+  safe: { flex: 1, backgroundColor: "#fff" },
+  container: { padding: 16 },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 6,
   },
-  backBtn: { paddingVertical: 8, paddingHorizontal: 8 },
-  backText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  back: { fontWeight: "900", color: "#111" },
+  title: { fontSize: 16, fontWeight: "900", color: "#111" },
 
-  title: { color: "#fff", fontSize: 20, fontWeight: "900" },
-  subtitle: { color: "#BDBDBD", marginBottom: 12 },
-
-  row: { flexDirection: "row", gap: 10, marginBottom: 8 },
-
-  primaryButton: {
+  actionsRow: { flexDirection: "row", gap: 10 },
+  actionBtn: {
     flex: 1,
-    backgroundColor: "#fff",
+    paddingVertical: 12,
     borderRadius: 12,
-    paddingVertical: 14,
+    backgroundColor: "#111",
     alignItems: "center",
   },
-  primaryButtonText: { color: "#000", fontSize: 16, fontWeight: "900" },
+  actionText: { color: "#fff", fontWeight: "900" },
 
-  secondaryButton: {
-    width: 120,
-    backgroundColor: "#1F1F1F",
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#2A2A2A",
-  },
-  secondaryButtonText: { color: "#fff", fontSize: 14, fontWeight: "900" },
-
-  card: {
-    backgroundColor: "#151515",
+  previewWrap: {
     borderRadius: 16,
-    padding: 14,
-    marginTop: 12,
-  },
-  cardTitle: { color: "#fff", fontSize: 16, fontWeight: "900", marginBottom: 10 },
-
-  preview: { width: "100%", height: 220, borderRadius: 12, marginTop: 6 },
-
-  errorCard: {
-    backgroundColor: "#2A1111",
-    borderRadius: 14,
-    padding: 12,
-    marginTop: 12,
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#5B1F1F",
+    borderColor: "#eee",
   },
-  errorText: { color: "#FFD5D5", fontWeight: "700" },
+  preview: { width: "100%", height: 220, resizeMode: "cover" },
+  emptyPreview: {
+    height: 220,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#eee",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyPreviewText: { color: "#777", fontWeight: "800" },
 
-  label: { color: "#BDBDBD", fontSize: 12, marginTop: 10, marginBottom: 6 },
+  primaryBtn: {
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: "#2b2b2b",
+    alignItems: "center",
+  },
+  primaryBtnText: { color: "#fff", fontWeight: "900" },
+  rowCenter: { flexDirection: "row", alignItems: "center" },
 
+  label: { fontSize: 12, fontWeight: "900", color: "#333", marginBottom: 6 },
   input: {
-    backgroundColor: "#0F0F0F",
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: "#fff",
-    borderWidth: 1,
-    borderColor: "#242424",
+    fontWeight: "700",
   },
-  multiline: { minHeight: 80, textAlignVertical: "top" },
 
-  splitRow: { flexDirection: "row", gap: 10, marginTop: 6 },
-
-  continueButton: {
-    marginTop: 14,
-    backgroundColor: "#2563EB",
-    borderRadius: 12,
-    paddingVertical: 14,
+  secondaryBtn: {
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: "#0b62ff",
     alignItems: "center",
   },
-  continueText: { color: "#fff", fontWeight: "900", fontSize: 16 },
+  secondaryBtnText: { color: "#fff", fontWeight: "900" },
 
-  rawCard: {
-    marginTop: 14,
-    backgroundColor: "#101010",
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#242424",
-  },
-  rawTitle: { color: "#BDBDBD", fontSize: 12, fontWeight: "900", marginBottom: 6 },
-  rawText: { color: "#EAEAEA", fontSize: 12, lineHeight: 18 },
-
-  disabled: { opacity: 0.55 },
+  errorText: { marginTop: 10, color: "#c00", fontWeight: "800" },
 });

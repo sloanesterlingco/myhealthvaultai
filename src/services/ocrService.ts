@@ -1,6 +1,6 @@
 // src/services/ocrService.ts
 // Unified OCR service for MyHealthVaultAI
-// Uses the same env-aware Firebase Functions URL builder as runOCR()
+// Deterministic V1 OCR endpoint + debug prints
 
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
@@ -8,6 +8,10 @@ import { runOCR } from "./ocrApi";
 
 export type OcrResult = {
   fullText: string;
+  endpoint?: string;
+  engine?: string;
+  projectId?: string | null;
+  region?: string | null;
 };
 
 class OcrService {
@@ -24,9 +28,7 @@ class OcrService {
   }
 
   private async fileToBase64(uri: string): Promise<string> {
-    return await FileSystem.readAsStringAsync(uri, {
-      encoding: "base64",
-    });
+    return await FileSystem.readAsStringAsync(uri, { encoding: "base64" });
   }
 
   async recognizeImage(uri: string): Promise<OcrResult> {
@@ -36,12 +38,20 @@ class OcrService {
     const res = await runOCR({
       fileBase64: base64Image,
       mimeType: "image/jpeg",
-      documentType: "lab_report",
+      documentType: "medication_label",
       sourceType: "image",
       fileName: "upload.jpg",
     });
 
-    return { fullText: (res?.text || "").trim() };
+    console.log("[OCR recognizeImage] text sample =", (res?.text || "").slice(0, 120));
+
+    return {
+      fullText: (res?.text || "").trim(),
+      endpoint: res?.endpoint,
+      engine: res?.engine,
+      projectId: res?.projectId ?? null,
+      region: res?.region ?? null,
+    };
   }
 
   async recognizePdf(base64Pdf: string): Promise<OcrResult> {
@@ -53,7 +63,13 @@ class OcrService {
       fileName: "upload.pdf",
     });
 
-    return { fullText: (res?.text || "").trim() };
+    return {
+      fullText: (res?.text || "").trim(),
+      endpoint: res?.endpoint,
+      engine: res?.engine,
+      projectId: res?.projectId ?? null,
+      region: res?.region ?? null,
+    };
   }
 }
 

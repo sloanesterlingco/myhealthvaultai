@@ -66,11 +66,21 @@ export default function AppHeader({
   }, [uid]);
 
   const canPressBack = Boolean(canGoBack) && typeof onPressBack === "function";
-  const canPressAvatar = Boolean(showAvatar) && typeof onPressAvatar === "function";
+  const canPressAvatar =
+    Boolean(showAvatar) && typeof onPressAvatar === "function";
 
   return (
     <View style={[styles.safe, { paddingTop: insets.top }]}>
-      <View style={styles.row}>
+      {/* ✅ Respect left/right safe area so avatar never clips */}
+      <View
+        style={[
+          styles.row,
+          {
+            paddingLeft: theme.spacing.md + (insets.left || 0),
+            paddingRight: theme.spacing.md + (insets.right || 0),
+          },
+        ]}
+      >
         {/* Left */}
         <View style={styles.left}>
           {canGoBack ? (
@@ -97,7 +107,7 @@ export default function AppHeader({
               accessibilityLabel="MyHealthVaultAI"
             />
           ) : (
-            <>
+            <View style={styles.titleWrap}>
               <Text style={styles.title} numberOfLines={1}>
                 {title ?? ""}
               </Text>
@@ -106,11 +116,11 @@ export default function AppHeader({
                   {subtitle}
                 </Text>
               ) : null}
-            </>
+            </View>
           )}
         </View>
 
-        {/* Right (Avatar ONLY — no gear anywhere) */}
+        {/* Right (Avatar ONLY) */}
         <View style={styles.right}>
           {showAvatar ? (
             <TouchableOpacity
@@ -118,6 +128,7 @@ export default function AppHeader({
               disabled={!canPressAvatar}
               style={[styles.avatarBtn, !canPressAvatar && { opacity: 0.95 }]}
               activeOpacity={0.85}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <View style={styles.avatarCircle}>
                 {avatarUri ? (
@@ -142,12 +153,13 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.colors.borderLight ?? theme.colors.border,
   },
+
   row: {
-    height: 52,
-    paddingHorizontal: theme.spacing.md,
+    height: 60,
     flexDirection: "row",
     alignItems: "center",
   },
+
   left: { width: 56, alignItems: "flex-start", justifyContent: "center" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   right: {
@@ -168,10 +180,12 @@ const styles = StyleSheet.create({
   iconSpacer: { width: 36, height: 36 },
 
   logoImg: {
-    height: 30,
-    width: 210,
+    height: 38,
+    width: "100%",
+    maxWidth: 260,
   },
 
+  titleWrap: { alignItems: "center" },
   title: {
     fontSize: 16,
     fontWeight: "900",

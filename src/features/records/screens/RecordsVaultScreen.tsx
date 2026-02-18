@@ -9,10 +9,13 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Linking,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
+
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { Feather } from "@expo/vector-icons";
 
 import ScreenContainer from "../../../ui/ScreenContainer";
 import { Card } from "../../../ui/Card";
@@ -25,10 +28,56 @@ import { runOCR } from "../../../services/ocrApi";
 import { uploadRecordImage } from "../../../services/uploadService";
 import { timelineService } from "../../medicalTimeline/services/timelineService";
 
+const WEB_PORTAL_URL = "https://myhealthvaultai.com/app";
+
+const VISIT_RECORDER_DEEP_LINK = "visitrecorder://";
+const VISIT_RECORDER_PLAYSTORE_WEB =
+  "https://play.google.com/store/apps/details?id=com.visitrecorder.app";
+
 function requireUser() {
   const u = auth.currentUser;
   if (!u) throw new Error("Not signed in.");
   return u;
+}
+
+async function tryOpenUrl(url: string) {
+  try {
+    const can = await Linking.canOpenURL(url);
+    if (!can) return false;
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function openVisitRecorderApp() {
+  if (await tryOpenUrl(VISIT_RECORDER_DEEP_LINK)) return true;
+  return false;
+}
+
+async function openVisitRecorderPlayStore() {
+  try {
+    await Linking.openURL(VISIT_RECORDER_PLAYSTORE_WEB);
+  } catch {
+    // no-op
+  }
+}
+
+async function openWebPortal() {
+  try {
+    const can = await Linking.canOpenURL(WEB_PORTAL_URL);
+    if (!can) {
+      Alert.alert(
+        "Cannot open web portal",
+        "Your device can’t open this link right now."
+      );
+      return;
+    }
+    await Linking.openURL(WEB_PORTAL_URL);
+  } catch {
+    Alert.alert("Cannot open web portal", "Your device can’t open this link right now.");
+  }
 }
 
 /**
@@ -43,10 +92,8 @@ async function ensureLocalFileUri(uri: string): Promise<string> {
   if (!uri.startsWith("content://")) return uri;
 
   const fsAny = FileSystem as any;
-  const baseDir: string =
-    fsAny.cacheDirectory || fsAny.documentDirectory || "";
+  const baseDir: string = fsAny.cacheDirectory || fsAny.documentDirectory || "";
 
-  // If we can't resolve a base directory, just return the original URI
   if (!baseDir) return uri;
 
   const dest = `${baseDir}mhv_record_${Date.now()}.jpg`;
@@ -57,6 +104,44 @@ async function ensureLocalFileUri(uri: string): Promise<string> {
   } catch {
     return uri;
   }
+}
+
+function FeatureRow({
+  icon,
+  iconBg,
+  title,
+  subtitle,
+  onPress,
+  rightText,
+}: {
+  icon: any;
+  iconBg: string;
+  title: string;
+  subtitle?: string;
+  onPress: () => void;
+  rightText?: string;
+}) {
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.9} style={styles.featureRow}>
+      <View style={[styles.featureIconWrap, { backgroundColor: iconBg }]}>
+        <Feather name={icon as any} size={18} color="#0F172A" />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text style={styles.featureTitle}>{title}</Text>
+        {subtitle ? (
+          <Text style={styles.featureSub} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+
+      <View style={styles.featureRight}>
+        {rightText ? <Text style={styles.featureRightText}>{rightText}</Text> : null}
+        <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+      </View>
+    </TouchableOpacity>
+  );
 }
 
 export default function RecordsVaultScreen() {
@@ -78,6 +163,12 @@ export default function RecordsVaultScreen() {
   }, []);
 
   const effectiveName = (fileName.trim() || defaultName).trim();
+
+  const resetUpload = useCallback(() => {
+    setPhotoUri(null);
+    setOcrText("");
+    setFileName("");
+  }, []);
 
   const takePhoto = useCallback(async () => {
     try {
@@ -146,23 +237,21 @@ export default function RecordsVaultScreen() {
 
       const localUri = await ensureLocalFileUri(photoUri);
 
-      // Typings in this repo don't expose EncodingType, so use `as any` safely.
       const fsAny = FileSystem as any;
       const base64 = await FileSystem.readAsStringAsync(localUri, {
         encoding: (fsAny.EncodingType?.Base64 ?? "base64") as any,
       });
 
-      const mimeType = localUri.toLowerCase().endsWith(".png")
-        ? "image/png"
-        : "image/jpeg";
+      const mimeType = localUri.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
 
+      // ✅ IMPORTANT: Use the same key as the working flows (fileBase64)
       const result = await runOCR({
-        imageBase64: base64,
+        fileBase64: base64,
         mimeType,
         fileName: `${effectiveName}.jpg`,
         documentType: "other",
         sourceType: "upload_record",
-      });
+      } as any);
 
       const text = (result?.text || "").trim();
       setOcrText(text);
@@ -170,13 +259,29 @@ export default function RecordsVaultScreen() {
       if (!text) {
         Alert.alert("OCR", "No text was detected. You can still save the image.");
       }
-    } catch (e) {
+    } catch (e: any) {
       console.log("runOcrNow error", e);
-      Alert.alert("OCR", "OCR failed. You can still save the image.");
+
+      const msg = e?.message || "We couldn't read text from this image.";
+
+      Alert.alert("OCR failed", msg, [
+        {
+          text: "Back",
+          style: "cancel",
+          onPress: resetUpload, // clears photo so you can start over
+        },
+        {
+          text: "Try Again",
+          onPress: () => {
+            // keep photo, just clear the OCR text so user can retry
+            setOcrText("");
+          },
+        },
+      ]);
     } finally {
       setOcrLoading(false);
     }
-  }, [photoUri, effectiveName]);
+  }, [photoUri, effectiveName, resetUpload]);
 
   const saveRecord = useCallback(async () => {
     if (!photoUri) {
@@ -188,10 +293,8 @@ export default function RecordsVaultScreen() {
       setSaveLoading(true);
       const user = requireUser();
 
-      // 1) Upload image to Storage
       const upload = await uploadRecordImage(photoUri, { fileName: effectiveName });
 
-      // 2) Store a record document for the web portal (Firestore)
       const recordDoc = {
         uid: user.uid,
         name: effectiveName,
@@ -202,16 +305,18 @@ export default function RecordsVaultScreen() {
         source: "mobile_records_vault_v1",
       };
 
-      await addDoc(collection(db, "patients", user.uid, "records"), recordDoc);
+      const docRef = await addDoc(collection(db, "patients", user.uid, "recordsVault"), recordDoc);
 
-      // 3) Add Timeline card so user sees it immediately
       await timelineService.addEvent({
         type: "RECORD_UPLOAD",
+        category: "records",
         summary: `Record: ${effectiveName}`,
         detail: ocrText ? ocrText : "Image saved to Records Vault.",
         level: "info",
         timestamp: Date.now(),
         meta: {
+          source: "records_vault",
+          recordId: docRef.id,
           recordName: effectiveName,
           imageUrl: upload.url,
           storagePath: upload.path,
@@ -221,28 +326,70 @@ export default function RecordsVaultScreen() {
 
       Alert.alert("Saved", "Your record was saved and added to your Timeline.");
 
-      // Reset for next upload
-      setPhotoUri(null);
-      setOcrText("");
-      setFileName("");
+      resetUpload();
     } catch (e: any) {
       console.log("saveRecord error", e);
       Alert.alert("Save failed", e?.message || "Could not save this record.");
     } finally {
       setSaveLoading(false);
     }
-  }, [effectiveName, ocrText, photoUri]);
+  }, [effectiveName, ocrText, photoUri, resetUpload]);
+
+  const onVisitRecorder = useCallback(async () => {
+    const opened = await openVisitRecorderApp();
+    if (!opened) {
+      Alert.alert(
+        "Visit Recorder not installed",
+        "Install Visit Recorder to record visits and unlock AI summaries (with changes noted).",
+        [{ text: "Cancel", style: "cancel" }, { text: "Install", onPress: openVisitRecorderPlayStore }]
+      );
+    }
+  }, []);
+
+  const onAiSummaryPro = useCallback(() => {
+    Alert.alert(
+      "AI Summary (Pro)",
+      "AI summaries with changes noted are powered by Visit Recorder. Open Visit Recorder to subscribe and unlock Pro.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Open Visit Recorder", onPress: onVisitRecorder },
+        { text: "Open Web Portal", onPress: openWebPortal },
+      ]
+    );
+  }, [onVisitRecorder]);
 
   const canSave = hasPhoto && !saveLoading;
 
   return (
-    <ScreenContainer
-      showHeader
-      title="Records Vault"
-      headerShowAvatar
-      scroll
-      contentStyle={{ paddingTop: 0 }}
-    >
+    <ScreenContainer showHeader title="Records Vault" headerShowAvatar scroll contentStyle={{ paddingTop: 0 }}>
+      {/* ✅ CTA Real Estate (1,2,3) */}
+      <Card style={styles.ctaStackCard}>
+        <FeatureRow
+          icon="globe"
+          iconBg="rgba(15, 23, 42, 0.06)"
+          title="Web Portal"
+          subtitle="Open your vault on desktop for easier viewing and uploads."
+          onPress={openWebPortal}
+        />
+        <View style={styles.rowDivider} />
+        <FeatureRow
+          icon="mic"
+          iconBg="rgba(11, 142, 142, 0.14)"
+          title="Visit Recorder"
+          subtitle="Record visits + get AI summaries (with changes noted)."
+          onPress={onVisitRecorder}
+          rightText="Open"
+        />
+        <View style={styles.rowDivider} />
+        <FeatureRow
+          icon="any"
+          iconBg="rgba(29, 78, 216, 0.10)"
+          title="AI Summary (Pro)"
+          subtitle="Summaries + translation + export + sharing. Powered by Visit Recorder."
+          onPress={onAiSummaryPro}
+        />
+      </Card>
+
       <Card style={styles.card}>
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
@@ -278,6 +425,18 @@ export default function RecordsVaultScreen() {
               <Image source={{ uri: photoUri }} style={styles.preview} resizeMode="cover" />
             </View>
 
+            <View style={styles.actionsRow}>
+              <View style={{ flex: 1 }}>
+                <Button label="Choose different photo" variant="secondary" onPress={pickFromLibrary} />
+              </View>
+              <View style={{ width: 12 }} />
+              <View style={{ flex: 1 }}>
+                <Button label="Remove" variant="ghost" onPress={resetUpload} />
+              </View>
+            </View>
+
+            <View style={{ height: theme.spacing.md }} />
+
             <Text style={styles.inputLabel}>File name</Text>
             <TextInput
               value={fileName}
@@ -301,25 +460,64 @@ export default function RecordsVaultScreen() {
 
             <View style={{ height: theme.spacing.md }} />
 
-            <Button
-              label={saveLoading ? "Saving…" : "Save to Vault"}
-              onPress={saveRecord}
-              disabled={!canSave}
-            />
+            <Button label={saveLoading ? "Saving…" : "Save to Vault"} onPress={saveRecord} disabled={!canSave} />
           </>
         )}
       </Card>
 
-      {/* ✅ Your SectionHeader only accepts `title` in this repo */}
       <SectionHeader title="V1 Notes" />
-      <Text style={styles.notes}>
-        Records Vault logic is optional for V1 launch; UI is accepted. OCR + save can be V1.1 if needed.
-      </Text>
+      <Text style={styles.notes}>Tip: For best results, fill the frame and use bright, even lighting.</Text>
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
+  ctaStackCard: {
+    marginBottom: theme.spacing.md,
+    paddingVertical: 4,
+  },
+  featureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  featureIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  featureTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: theme.colors.text,
+    marginBottom: 2,
+  },
+  featureSub: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
+  featureRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  featureRightText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: theme.colors.brand,
+  },
+  rowDivider: {
+    height: 1,
+    backgroundColor: theme.colors.borderLight ?? "rgba(15, 23, 42, 0.08)",
+    marginHorizontal: 12,
+  },
+
   card: {
     marginBottom: theme.spacing.lg,
   },

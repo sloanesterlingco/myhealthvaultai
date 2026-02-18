@@ -11,13 +11,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  Linking,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import { useNavigation } from "@react-navigation/native";
-
 import ScreenContainer from "../../../ui/ScreenContainer";
 import { Card } from "../../../ui/Card";
 import { Button } from "../../../ui/Button";
@@ -36,12 +34,49 @@ type PickedFile = {
 };
 
 function isPdf(mimeType: string) {
-  return mimeType?.toLowerCase() === "application/pdf";
+  return (mimeType || "").toLowerCase() === "application/pdf";
 }
 
 function guessNameFromUri(uri: string) {
-  const parts = uri.split("/");
+  const parts = (uri || "").split("/");
   return parts[parts.length - 1] || "record";
+}
+
+function safeCacheName(name: string) {
+  const base = (name || "record").replace(/[^\w.\-]+/g, "_");
+  return base.slice(0, 120);
+}
+
+/**
+ * Android can give content:// URIs which readAsStringAsync cannot always read.
+ * Copy those to cacheDirectory so we can reliably read base64.
+ */
+async function ensureFileUri(originalUri: string, fileName: string): Promise<string> {
+  if (!originalUri) throw new Error("Missing file URI.");
+
+  // Most reliable: file://
+  if (originalUri.startsWith("file://")) return originalUri;
+
+  // If it's content:// (common on Android), copy to cache.
+  if (originalUri.startsWith("content://")) {
+    const cacheDir = (FileSystem as any).cacheDirectory;
+
+    if (!cacheDir) throw new Error("No cache directory available.");
+
+    const dest = cacheDir + safeCacheName(fileName || "record");
+    try {
+      await FileSystem.copyAsync({ from: originalUri, to: dest });
+      return dest;
+    } catch (e: any) {
+      // Some providers need a different filename extension; try a fallback.
+      const fallback = cacheDir + `${Date.now()}_${safeCacheName(fileName || "record")}`;
+      await FileSystem.copyAsync({ from: originalUri, to: fallback });
+      return fallback;
+    }
+  }
+
+  // Unknown scheme — still try as-is
+  return originalUri;
 }
 
 export default function UploadRecordScreen() {
@@ -50,13 +85,16 @@ export default function UploadRecordScreen() {
   const [loading, setLoading] = useState(false);
 
   const [picked, setPicked] = useState<PickedFile | null>(null);
-  const [title, setTitle] = useState<string>("");
+  const [title, setTitle] = useState<string>("Medical record");
 
   const [ocrText, setOcrText] = useState<string>("");
   const [ranOcr, setRanOcr] = useState(false);
 
   const canRunOcr = useMemo(() => !!picked && !loading, [picked, loading]);
-  const canSave = useMemo(() => !!picked && title.trim().length > 0 && !loading, [picked, title, loading]);
+  const canSave = useMemo(
+    () => !!picked && title.trim().length > 0 && !loading,
+    [picked, title, loading]
+  );
 
   async function takePhoto() {
     try {
@@ -80,12 +118,12 @@ export default function UploadRecordScreen() {
       const asset = res.assets?.[0];
       if (!asset?.uri) throw new Error("No photo captured.");
 
-      const name = "record_photo";
       setPicked({
         uri: asset.uri,
-        name,
+        name: "record_photo.jpg",
         mimeType: "image/jpeg",
       });
+
       setTitle("Medical record");
     } catch (e: any) {
       Alert.alert("Photo failed", e?.message || "Could not take a photo.");
@@ -134,45 +172,94 @@ export default function UploadRecordScreen() {
       setLoading(true);
       setOcrText("");
 
-      const base64 = await FileSystem.readAsStringAsync(picked.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      const fixedUri = await ensureFileUri(picked.uri, picked.name);
 
-      const sourceType = isPdf(picked.mimeType) ? "pdf" : "image";
+      // ✅ PDFs are too large for base64 HTTP uploads (and the function now expects storagePath).
+      // So: upload to Firebase Storage first, then OCR via GCS.
+      if (isPdf(picked.mimeType)) {
+        const uploaded = await uploadRecordFileFromUri({
+          fileUri: fixedUri,
+          fileName: picked.name,
+          mimeType: picked.mimeType,
+        });
+
+        const resp = await runOCR({
+          storagePath: uploaded.storagePath,
+          mimeType: uploaded.contentType,
+          sourceType: "upload_record",
+          documentType: "other",
+          fileName: picked.name,
+        });
+
+        setOcrText((resp?.text || "").toString());
+        setRanOcr(true);
+
+        if (!resp?.text) {
+          Alert.alert("OCR", "OCR ran but returned empty text.");
+        }
+
+        return;
+      }
+
+      // ✅ Images can still use base64 directly (fast path)
+      const base64 = await FileSystem.readAsStringAsync(fixedUri, {
+        encoding: "base64" as any,
+      });
 
       const resp = await runOCR({
         fileBase64: base64,
         mimeType: picked.mimeType,
-        sourceType,
+        sourceType: "image",
         documentType: "other",
-        fileUri: picked.uri,
+        fileUri: fixedUri,
         fileName: picked.name,
       } as any);
 
       setOcrText((resp?.text || "").toString());
       setRanOcr(true);
-    } catch (e: any) {
-      Alert.alert("OCR failed", e?.message || "Unable to read text from this file.");
-      setRanOcr(true);
-    } finally {
-      setLoading(false);
-    }
-  }
 
-  async function saveNow() {
+      if (!resp?.text) {
+        Alert.alert("OCR", "OCR ran but returned empty text.");
+      }
+    } catch (e: any) {
+  const msg = e?.message || "Unable to read text from this file.";
+
+  Alert.alert("OCR failed", msg, [
+    {
+      text: "Back",
+      style: "cancel",
+      onPress: () => navigation.goBack(),
+    },
+    {
+      text: "Try Again",
+      onPress: () => {
+        setOcrText("");
+        setRanOcr(false);
+      },
+    },
+  ]);
+
+  setRanOcr(true);
+} finally {
+  setLoading(false);
+}
+  } 
+
+async function saveNow() {
     if (!picked) return;
 
     try {
       setLoading(true);
 
-      // 1) Upload file to Firebase Storage
+      // Make upload reliable too (same Android content:// issue)
+      const fixedUri = await ensureFileUri(picked.uri, picked.name);
+
       const uploaded = await uploadRecordFileFromUri({
-        fileUri: picked.uri,
+        fileUri: fixedUri,
         fileName: title.trim() || picked.name,
         mimeType: picked.mimeType,
       });
 
-      // 2) Save metadata into Firestore (Records Vault + Timeline)
       await saveRecordToFirestore({
         title: title.trim(),
         documentType: "record",
@@ -193,7 +280,7 @@ export default function UploadRecordScreen() {
   return (
     <ScreenContainer
       showHeader
-      title="Upload Record"
+      title="Upload Record 🚨 TEST BUILD"
       subtitle="Take a photo, OCR it, name it, and save it to your vault."
       canGoBack
       scroll
@@ -227,6 +314,7 @@ export default function UploadRecordScreen() {
             <View style={{ marginTop: theme.spacing.md }}>
               <Text style={styles.meta}>Selected: {picked.name}</Text>
               <Text style={styles.meta}>Type: {picked.mimeType}</Text>
+              <Text style={styles.meta}>URI: {picked.uri.startsWith("content://") ? "content://" : "file://"}</Text>
             </View>
           ) : (
             <Text style={[styles.meta, { marginTop: theme.spacing.md }]}>
@@ -307,21 +395,14 @@ export default function UploadRecordScreen() {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    padding: theme.spacing.lg,
-  },
+  card: { padding: theme.spacing.lg },
   sectionTitle: {
     fontSize: 14,
     fontWeight: "900",
     color: theme.colors.text,
     marginBottom: theme.spacing.sm,
   },
-
-  row: {
-    flexDirection: "row",
-    gap: 10,
-  },
-
+  row: { flexDirection: "row", gap: 10 },
   actionButton: {
     flex: 1,
     backgroundColor: theme.colors.brand,
@@ -330,12 +411,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  actionText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "900",
-  },
-
+  actionText: { color: "white", fontSize: 14, fontWeight: "900" },
   actionButtonSecondary: {
     flex: 1,
     backgroundColor: theme.colors.surface,
@@ -346,20 +422,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
   },
-  actionTextSecondary: {
-    color: theme.colors.text,
-    fontSize: 14,
-    fontWeight: "900",
-  },
-
+  actionTextSecondary: { color: theme.colors.text, fontSize: 14, fontWeight: "900" },
   disabled: { opacity: 0.55 },
-
-  meta: {
-    color: theme.colors.textSecondary,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
+  meta: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: "700" },
   input: {
     borderWidth: 1,
     borderColor: theme.colors.borderLight,
@@ -371,7 +436,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
   },
-
   helper: {
     marginTop: 10,
     color: theme.colors.textSecondary,
@@ -379,17 +443,6 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     fontWeight: "700",
   },
-
-  ocrLabel: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: theme.colors.text,
-    marginBottom: 6,
-  },
-  ocrText: {
-    color: theme.colors.textSecondary,
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: "700",
-  },
+  ocrLabel: { fontSize: 12, fontWeight: "900", color: theme.colors.text, marginBottom: 6 },
+  ocrText: { color: theme.colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: "700" },
 });

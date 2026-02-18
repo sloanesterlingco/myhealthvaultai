@@ -1,567 +1,336 @@
 // src/features/medications/screens/MedicationsListScreen.tsx
-//
-// Polished V1 Medications list screen (REAL DATA + Active/Inactive toggle)
-// - Loads meds from patientService via useMedicationsList
-// - Refreshes on screen focus
-// - Shows Active meds by default
-// - Toggle: Show inactive
-//
-// NOTE: This screen is UI-only; it does NOT give medication advice.
 
-import React, { useMemo, useRef, useState, useCallback } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Switch } from "react-native";
-import { Feather } from "@expo/vector-icons";
+import React, { useCallback, useState } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Linking,
+  Alert,
+  ActivityIndicator,
+} from "react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
+import { Feather } from "@expo/vector-icons";
 
 import ScreenContainer from "../../../ui/ScreenContainer";
 import { Card } from "../../../ui/Card";
+import { SectionHeader } from "../../../ui/SectionHeader";
 import { Button } from "../../../ui/Button";
 import { theme } from "../../../theme";
 import { MainRoutes } from "../../../navigation/types";
-import { useMedicationsList } from "../hooks/useMedicationsList";
+import { patientService, Medication } from "../../../services/patientService";
 
-// Keep this flexible: patientService is JS and returns "any" shapes.
-// We'll render common fields safely.
-type AnyMedication = {
-  id?: string;
-  name?: string;
+const VISIT_RECORDER_DEEP_LINK = "visitrecorder://";
+const VISIT_RECORDER_PLAYSTORE_WEB =
+  "https://play.google.com/store/apps/details?id=com.visitrecorder.app";
 
-  // common variants
-  dose?: string;
-  dosage?: string;
-
-  frequency?: string;
-
-  // active/inactive variants
-  status?: string; // "active" | "inactive"
-  isActive?: boolean;
-  active?: boolean;
-
-  // stop date variants
-  stoppedAt?: string;
-  endDate?: string;
-
-  updatedAt?: number;
-  createdAt?: number;
-};
-
-function formatLastUpdated(ts: number | null) {
-  if (!ts) return "Not updated yet";
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  if (mins <= 0) return "Updated just now";
-  if (mins === 1) return "Updated 1 minute ago";
-  if (mins < 60) return `Updated ${mins} minutes ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs === 1) return "Updated 1 hour ago";
-  if (hrs < 24) return `Updated ${hrs} hours ago`;
-  const days = Math.floor(hrs / 24);
-  if (days === 1) return "Updated 1 day ago";
-  return `Updated ${days} days ago`;
+async function tryOpenUrl(url: string) {
+  try {
+    const can = await Linking.canOpenURL(url);
+    if (!can) return false;
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function isMedicationInactive(m: AnyMedication): boolean {
-  if (!m) return false;
-
-  // Explicit inactive flags
-  if (typeof m.status === "string" && m.status.toLowerCase() === "inactive") return true;
-  if (typeof m.isActive === "boolean" && m.isActive === false) return true;
-  if (typeof m.active === "boolean" && m.active === false) return true;
-
-  // If there's an end/stop date, treat as inactive for list purposes
-  if (typeof m.stoppedAt === "string" && m.stoppedAt.trim().length > 0) return true;
-  if (typeof m.endDate === "string" && m.endDate.trim().length > 0) return true;
-
+async function openVisitRecorderApp() {
+  if (await tryOpenUrl(VISIT_RECORDER_DEEP_LINK)) return true;
   return false;
 }
 
-function getDoseText(m: AnyMedication) {
-  return (m?.dosage ?? m?.dose ?? "").toString().trim();
+async function openVisitRecorderPlayStore() {
+  try {
+    await Linking.openURL(VISIT_RECORDER_PLAYSTORE_WEB);
+  } catch {}
+}
+
+function trimOrEmpty(v: any): string {
+  return String(v ?? "").trim();
+}
+
+function formatMedSubtitle(m: Medication) {
+  const parts: string[] = [];
+  const dose = trimOrEmpty((m as any).dosage);
+  const freq = trimOrEmpty((m as any).frequency);
+  if (dose) parts.push(dose);
+  if (freq) parts.push(freq);
+  return parts.join(" • ");
+}
+
+function formatMedMeta(m: Medication) {
+  const parts: string[] = [];
+  const pharmacy = trimOrEmpty((m as any).pharmacy);
+  const rxNumber = trimOrEmpty((m as any).rxNumber);
+  if (pharmacy) parts.push(pharmacy);
+  if (rxNumber) parts.push(`Rx ${rxNumber}`);
+  return parts.join(" • ");
 }
 
 export default function MedicationsListScreen() {
   const navigation = useNavigation<any>();
-  const { medications, loadMedications } = useMedicationsList();
 
-  const [showInactive, setShowInactive] = useState(false);
+  const [items, setItems] = useState<Medication[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  // Track a user-triggered refresh timestamp
-  const lastUpdatedRef = useRef<number | null>(null);
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const meds = await patientService.listMedications();
+      setItems(Array.isArray(meds) ? meds : []);
+    } catch (e: any) {
+      console.log("List medications error:", e);
+      Alert.alert("Could not load medications", e?.message ?? "Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const refresh = useCallback(async () => {
-    await loadMedications();
-    lastUpdatedRef.current = Date.now();
-  }, [loadMedications]);
-
-  // Refresh when the screen is focused (so edits appear immediately)
   useFocusEffect(
     useCallback(() => {
-      refresh();
-    }, [refresh])
+      load();
+    }, [load])
   );
 
-  const lastUpdatedText = useMemo(() => {
-    if (lastUpdatedRef.current) return formatLastUpdated(lastUpdatedRef.current);
-    if (medications && medications.length > 0) return "Medication list loaded";
-    return "No medications yet";
-  }, [medications]);
-
-  const { activeMeds, inactiveMeds, visibleMeds } = useMemo(() => {
-    const list = (Array.isArray(medications) ? medications : []) as AnyMedication[];
-
-    const inactive = list.filter((m) => isMedicationInactive(m));
-    const active = list.filter((m) => !isMedicationInactive(m));
-
-    return {
-      activeMeds: active,
-      inactiveMeds: inactive,
-      visibleMeds: showInactive ? list : active,
-    };
-  }, [medications, showInactive]);
-
-  const status = useMemo(() => {
-    if (!medications || medications.length === 0) {
-      return {
-        label: "No medications",
-        sub: "Add or scan a label to build your list for safer care.",
-        tone: "neutral" as const,
-      };
+  const onVisitRecorder = useCallback(async () => {
+    const opened = await openVisitRecorderApp();
+    if (!opened) {
+      Alert.alert(
+        "Visit Recorder not installed",
+        "Install Visit Recorder to record visits and automatically update your medication list.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Install", onPress: openVisitRecorderPlayStore },
+        ]
+      );
     }
+  }, []);
 
-    if (activeMeds.length === 0 && inactiveMeds.length > 0) {
-      return {
-        label: "All inactive",
-        sub: "You have medications saved, but none are currently active.",
-        tone: "neutral" as const,
-      };
-    }
+  const goAddMedication = useCallback(() => {
+    navigation.navigate(MainRoutes.ADD_MEDICATION);
+  }, [navigation]);
 
-    return {
-      label: "List ready",
-      sub: "Keep this updated so clinicians can act fast and safely.",
-      tone: "good" as const,
-    };
-  }, [medications, activeMeds.length, inactiveMeds.length]);
+  const goScanMedication = useCallback(() => {
+    navigation.navigate(MainRoutes.MEDICATION_OCR_IMPORT);
+  }, [navigation]);
 
-  const pillStyle = status.tone === "good" ? styles.pillGood : styles.pillNeutral;
-  const dotStyle = status.tone === "good" ? styles.dotGood : styles.dotNeutral;
+  const openMedication = useCallback(
+    (med: Medication) => {
+      if (!med?.id) return;
 
-  const goToScan = () => navigation.navigate(MainRoutes.MEDICATION_OCR_IMPORT);
-  const goToAddManual = () => navigation.navigate(MainRoutes.ADD_MEDICATION);
-
-  const goToDetail = (m: AnyMedication) =>
-    navigation.navigate(MainRoutes.MEDICATION_DETAIL, { medication: m } as any);
-
-  const sectionCount = showInactive ? medications?.length ?? 0 : activeMeds.length;
+      // ✅ Open your existing MedicationDetailScreen
+      navigation.navigate(MainRoutes.MEDICATION_DETAIL, { id: med.id });
+      // If your detail screen expects "medicationId" instead, use:
+      // navigation.navigate(MainRoutes.MEDICATION_DETAIL, { medicationId: med.id });
+    },
+    [navigation]
+  );
 
   return (
     <ScreenContainer
-      showHeader={true}
-      title="Medications"
-      headerShowLogo={false}
-      headerShowAvatar={true}
-      onPressAvatar={() =>
-        navigation.navigate(MainRoutes.DASHBOARD_TAB, {
-          screen: MainRoutes.PROFILE_SETTINGS,
-        })
-      }
-      scroll={true}
-      contentStyle={{ paddingTop: 0 }}
+      showHeader
+      headerShowLogo
+      headerHideTitleWhenLogo
+      headerShowAvatar
     >
-      {/* ✅ Prestige meta row (small, not redundant) */}
-      <View style={styles.metaRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.metaTitle}>Medication overview</Text>
-          <Text style={styles.metaSub}>{lastUpdatedText}</Text>
-        </View>
+      <View style={{ height: theme.spacing.md }} />
 
-        {/* Optional small “manage” icon button */}
-        <TouchableOpacity onPress={() => {}} activeOpacity={0.85} style={styles.iconPill}>
-          <Feather name="shield" size={16} color={theme.colors.text} />
-          <Text style={styles.iconPillText}>Safety</Text>
+      {/* Visit Recorder CTA */}
+      <Card style={styles.vrCard}>
+        <TouchableOpacity
+          onPress={onVisitRecorder}
+          activeOpacity={0.9}
+          style={styles.vrRow}
+        >
+          <View style={styles.vrIconWrap}>
+            <Feather name="mic" size={18} color="#FFFFFF" />
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={styles.vrTitle}>Record Your Visits Automatically</Text>
+            <Text style={styles.vrSub}>
+              Download Visit Recorder to capture appointments and sync AI summaries
+              directly into your medication history.
+            </Text>
+          </View>
+
+          <View style={styles.vrCtaPill}>
+            <Text style={styles.vrCtaText}>Open</Text>
+            <Feather name="chevron-right" size={16} color="#FFFFFF" />
+          </View>
         </TouchableOpacity>
-      </View>
-
-      {/* ✅ Status summary */}
-      <Card style={styles.summaryCard}>
-        <View style={styles.summaryTopRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.summaryKicker}>Medication list status</Text>
-
-            <View style={[styles.statusPill, pillStyle]}>
-              <View style={[styles.statusDot, dotStyle]} />
-              <Text style={styles.statusText}>{status.label}</Text>
-            </View>
-
-            <Text style={styles.summarySub}>{status.sub}</Text>
-          </View>
-
-          <View style={styles.summaryIcon}>
-            <Feather name="package" size={20} color={theme.colors.brand} />
-          </View>
-        </View>
-
-        <View style={{ height: theme.spacing.md }} />
-
-        {/* Primary actions */}
-        <View style={styles.actionsRow}>
-          <View style={{ flex: 1 }}>
-            <Button label="Scan label" onPress={goToScan} style={styles.btnBrand} />
-          </View>
-
-          <View style={{ width: theme.spacing.sm }} />
-
-          <View style={{ flex: 1 }}>
-            <Button label="Add manually" onPress={goToAddManual} />
-          </View>
-        </View>
-
-        <Text style={styles.helperLine}>
-          Tip: scanning is fastest; manual add is best for corrections.
-        </Text>
       </Card>
 
-      {/* ✅ Section header + Show inactive toggle */}
-      <View style={styles.sectionRow}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <Text style={styles.sectionTitle}>Your medications</Text>
-          <Text style={styles.sectionCount}>{`${sectionCount}`}</Text>
-        </View>
+      <SectionHeader title="Your Medications" />
+      <Text style={{ fontSize: 10, opacity: 0.6 }}>MedsList vNext</Text>
 
-        <View style={styles.toggleWrap}>
-          <Text style={styles.toggleText}>Show inactive</Text>
-          <Switch value={showInactive} onValueChange={setShowInactive} />
-        </View>
-      </View>
+      {/* Actions */}
+      <Card style={styles.actionCard}>
+        <Button label="Add medication manually" onPress={goAddMedication} />
+        <View style={{ height: theme.spacing.sm }} />
+        <Button
+          label="Scan medication label"
+          variant="secondary"
+          onPress={goScanMedication}
+        />
+      </Card>
 
-      {/* Empty state */}
-      {!medications || medications.length === 0 ? (
-        <Card style={styles.emptyCard}>
-          <View style={styles.emptyRow}>
-            <View style={styles.emptyIcon}>
-              <Feather name="info" size={18} color={theme.colors.brand} />
-            </View>
+      <View style={{ height: theme.spacing.md }} />
 
-            <View style={{ flex: 1 }}>
-              <Text style={styles.emptyTitle}>No medications added yet</Text>
-              <Text style={styles.emptySub}>
-                Add one to start building a clean list you can share at visits.
-              </Text>
-            </View>
-          </View>
-
-          <View style={{ height: theme.spacing.md }} />
-
-          <Button label="Add first medication" onPress={goToAddManual} />
-          <TouchableOpacity onPress={goToScan} activeOpacity={0.85} style={styles.secondaryLink}>
-            <Text style={styles.secondaryLinkText}>Or scan a label</Text>
-            <Feather name="chevron-right" size={16} color={theme.colors.brand} />
-          </TouchableOpacity>
+      {loading ? (
+        <Card style={styles.loadingCard}>
+          <ActivityIndicator />
+          <View style={{ height: theme.spacing.sm }} />
+          <Text style={styles.loadingText}>Loading medications…</Text>
         </Card>
-      ) : visibleMeds.length === 0 ? (
+      ) : items.length === 0 ? (
         <Card style={styles.emptyCard}>
-          <View style={styles.emptyRow}>
-            <View style={styles.emptyIcon}>
-              <Feather name="check-circle" size={18} color={theme.colors.brand} />
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <Text style={styles.emptyTitle}>No active medications</Text>
-              <Text style={styles.emptySub}>
-                Your active list is empty. Turn on “Show inactive” to view your history.
-              </Text>
-            </View>
-          </View>
+          <Text style={styles.emptyTitle}>No medications added yet</Text>
+          <Text style={styles.emptySub}>
+            Add medications manually or scan your prescription label.
+          </Text>
         </Card>
       ) : (
-        <View style={{ marginTop: theme.spacing.sm }}>
-          {visibleMeds.map((m) => {
-            const inactive = isMedicationInactive(m);
-            const doseText = getDoseText(m);
-            const freqText = (m?.frequency ?? "").toString().trim();
+        <View style={{ gap: theme.spacing.sm }}>
+          {items.map((m) => {
+            const title = trimOrEmpty(m.name) || "Medication";
+            const subtitle = formatMedSubtitle(m);
+            const meta = formatMedMeta(m);
 
             return (
-              <TouchableOpacity
-                key={m.id ?? `${m.name}-${Math.random()}`}
-                activeOpacity={0.85}
-                onPress={() => goToDetail(m)}
-              >
-                <Card style={styles.medRowCard}>
-                  <View style={styles.medRow}>
-                    <View style={styles.medIcon}>
-                      <Feather name="package" size={18} color={theme.colors.brand} />
-                    </View>
-
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                        <Text style={styles.medName}>{m.name || "Unnamed medication"}</Text>
-
-                        {inactive ? (
-                          <View style={styles.inactivePill}>
-                            <Text style={styles.inactivePillText}>Inactive</Text>
-                          </View>
-                        ) : null}
-                      </View>
-
-                      <Text style={styles.medMeta}>
-                        {[doseText, freqText].filter(Boolean).join(" • ") || "—"}
-                      </Text>
-                    </View>
-
-                    <Feather name="chevron-right" size={18} color={theme.colors.textMuted} />
+              <Card key={m.id ?? `${title}-${Math.random()}`} style={styles.medCard}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => openMedication(m)}
+                  style={styles.medRow}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.medTitle}>{title}</Text>
+                    {subtitle ? <Text style={styles.medSub}>{subtitle}</Text> : null}
+                    {meta ? <Text style={styles.medMeta}>{meta}</Text> : null}
                   </View>
-                </Card>
-              </TouchableOpacity>
+
+                  <Feather
+                    name="chevron-right"
+                    size={18}
+                    color={theme.colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </Card>
             );
           })}
         </View>
       )}
+
+      <View style={{ height: theme.spacing.xl }} />
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  // Meta row
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  vrCard: {
     marginBottom: theme.spacing.md,
-  },
-  metaTitle: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: theme.colors.text,
-    letterSpacing: 0.2,
-  },
-  metaSub: {
-    marginTop: 4,
-    fontSize: 12,
-    color: theme.colors.textSecondary,
-    fontWeight: "700",
-  },
-
-  iconPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.9)",
     borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.08)",
+    borderColor: theme.colors.borderLight,
   },
-  iconPillText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: theme.colors.text,
-    letterSpacing: 0.2,
-  },
-
-  // Summary card
-  summaryCard: {
-    marginBottom: theme.spacing.md,
-  },
-  summaryTopRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  summaryKicker: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: theme.colors.textSecondary,
-    letterSpacing: 0.6,
-    textTransform: "uppercase",
-    marginBottom: 10,
-  },
-  summarySub: {
-    marginTop: 10,
-    fontSize: 13,
-    fontWeight: "700",
-    color: theme.colors.textSecondary,
-    lineHeight: 18,
-  },
-  summaryIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "rgba(59, 130, 246, 0.10)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(59, 130, 246, 0.12)",
-  },
-
-  statusPill: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  statusText: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: theme.colors.text,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  pillGood: {
-    backgroundColor: "rgba(34, 197, 94, 0.10)",
-    borderColor: "rgba(34, 197, 94, 0.20)",
-  },
-  pillNeutral: {
-    backgroundColor: "rgba(15, 23, 42, 0.04)",
-    borderColor: "rgba(15, 23, 42, 0.08)",
-  },
-  dotGood: { backgroundColor: "#22C55E" },
-  dotNeutral: { backgroundColor: "rgba(15, 23, 42, 0.35)" },
-
-  actionsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  helperLine: {
-    marginTop: theme.spacing.md,
-    fontSize: 12,
-    fontWeight: "700",
-    color: theme.colors.textSecondary,
-  },
-
-  btnBrand: { backgroundColor: theme.colors.brand },
-
-  // Section header
-  sectionRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: theme.spacing.xs ?? 0,
-    marginBottom: theme.spacing.sm,
-    gap: 10,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "900",
-    color: theme.colors.text,
-  },
-  sectionCount: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: theme.colors.textSecondary,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "rgba(15, 23, 42, 0.04)",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.06)",
-  },
-
-  toggleWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  toggleText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: theme.colors.textSecondary,
-  },
-
-  inactivePill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: "rgba(15, 23, 42, 0.06)",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.10)",
-  },
-  inactivePillText: {
-    fontSize: 11,
-    fontWeight: "900",
-    color: theme.colors.textSecondary,
-  },
-
-  // Empty state
-  emptyCard: {
-    marginTop: theme.spacing.sm,
-  },
-  emptyRow: {
+  vrRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
   },
-  emptyIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(59, 130, 246, 0.12)",
+  vrIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: theme.colors.brand,
   },
-  emptyTitle: {
+  vrTitle: {
     fontSize: 14,
     fontWeight: "900",
     color: theme.colors.text,
+    marginBottom: 4,
   },
-  emptySub: {
-    marginTop: 3,
+  vrSub: {
     fontSize: 12,
     fontWeight: "700",
     color: theme.colors.textSecondary,
     lineHeight: 16,
   },
-  secondaryLink: {
-    marginTop: theme.spacing.sm,
+  vrCtaPill: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    backgroundColor: theme.colors.brand,
   },
-  secondaryLinkText: {
+  vrCtaText: {
     fontSize: 12,
     fontWeight: "900",
-    color: theme.colors.brand,
+    color: "#FFFFFF",
   },
 
-  // Medication row card
-  medRowCard: {
+  actionCard: {
+    paddingVertical: theme.spacing.md,
+  },
+
+  emptyCard: {
     marginBottom: theme.spacing.md,
     paddingVertical: theme.spacing.md,
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: theme.colors.text,
+    marginBottom: 4,
+  },
+  emptySub: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
+
+  loadingCard: {
+    paddingVertical: theme.spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+  },
+
+  medCard: {
+    paddingVertical: theme.spacing.sm,
   },
   medRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
   },
-  medIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(15, 23, 42, 0.04)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.06)",
-  },
-  medName: {
+  medTitle: {
     fontSize: 14,
     fontWeight: "900",
     color: theme.colors.text,
   },
-  medMeta: {
-    marginTop: 3,
+  medSub: {
+    marginTop: 2,
     fontSize: 12,
+    fontWeight: "800",
+    color: theme.colors.textSecondary,
+  },
+  medMeta: {
+    marginTop: 2,
+    fontSize: 11,
     fontWeight: "700",
     color: theme.colors.textSecondary,
+    opacity: 0.9,
   },
 });

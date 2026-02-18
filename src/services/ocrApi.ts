@@ -1,6 +1,9 @@
 // src/services/ocrApi.ts
 //
-// OCR API client for Firebase HTTPS Function: ocrRecognize
+// OCR API client for Firebase HTTPS Function: ocrRecognizeV1
+// V1 rule: deterministic endpoint (NO region fallback)
+
+import { FIREBASE_CONFIG } from "../config/env";
 
 export type OCRDocumentType =
   | "unknown"
@@ -10,7 +13,8 @@ export type OCRDocumentType =
   | "imaging_report"
   | "visit_note"
   | "insurance"
-  | "receipt";
+  | "receipt"
+  | "record";
 
 export type OCRSourceType =
   | "image"
@@ -20,10 +24,15 @@ export type OCRSourceType =
   | "unknown";
 
 export type OCRRecognizeRequest = {
+  // ✅ Option A: base64 image (legacy path)
   base64?: string;
   fileBase64?: string;
   imageBase64?: string;
   content?: string;
+
+  // ✅ Option B: Storage path (preferred for Records Vault)
+  // Example: recordsVault/{uid}/{timestamp}_myfile
+  storagePath?: string;
 
   mimeType: string;
   fileName?: string;
@@ -34,10 +43,13 @@ export type OCRRecognizeRequest = {
   fileUri?: string;
 };
 
-import { FIREBASE_CONFIG } from "../config/env";
-
 export type OCRRecognizeResponse = {
   text: string;
+  endpoint: string;
+  engine?: string;
+  projectId?: string | null;
+  region?: string | null;
+  raw?: any;
 };
 
 function pickEnv(...keys: string[]): string | null {
@@ -50,10 +62,9 @@ function pickEnv(...keys: string[]): string | null {
 
 function normalizeOcrUrl(urlOrBase: string): string {
   const u = urlOrBase.replace(/\/$/, "");
-
-  if (u.toLowerCase().includes("ocrrecognize")) return u;
-  if (u.toLowerCase().includes("cloudfunctions.net")) return `${u}/ocrRecognize`;
-  return `${u}/ocrRecognize`;
+  if (u.toLowerCase().includes("ocrrecognizev1")) return u;
+  if (u.toLowerCase().includes("cloudfunctions.net")) return `${u}/ocrRecognizeV1`;
+  return `${u}/ocrRecognizeV1`;
 }
 
 function buildOcrUrl(): string {
@@ -74,8 +85,10 @@ function buildOcrUrl(): string {
 
   const projectId = FIREBASE_CONFIG?.projectId;
   const region =
-    pickEnv("EXPO_PUBLIC_FUNCTIONS_REGION", "EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION") ||
-    "us-central1";
+    pickEnv(
+      "EXPO_PUBLIC_FUNCTIONS_REGION",
+      "EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION"
+    ) || "us-central1";
 
   if (projectId) {
     return normalizeOcrUrl(`https://${region}-${projectId}.cloudfunctions.net`);
@@ -84,84 +97,88 @@ function buildOcrUrl(): string {
   throw new Error("OCR endpoint not configured. Set EXPO_PUBLIC_OCR_RECOGNIZE_URL.");
 }
 
-function getBase64(req: OCRRecognizeRequest): string {
-  const base64 = req.base64 || req.fileBase64 || req.imageBase64 || req.content;
-  if (!base64) throw new Error("OCR request missing image base64 data.");
-  return base64;
+function pickBase64(req: OCRRecognizeRequest): string | null {
+  return req.base64 || req.fileBase64 || req.imageBase64 || req.content || null;
 }
 
-function swapRegion(url: string, from: string, to: string) {
-  return url.replace(`https://${from}-`, `https://${to}-`);
-}
+export async function runOCR(request: OCRRecognizeRequest): Promise<OCRRecognizeResponse> {
+  const endpoint = buildOcrUrl();
 
-function looksLikeFirebaseFunctionsUrl(url: string) {
-  return url.includes(".cloudfunctions.net");
-}
+  const base64 = pickBase64(request);
+  const storagePath = (request.storagePath || "").trim();
 
-export async function runOCR(
-  request: OCRRecognizeRequest
-): Promise<OCRRecognizeResponse> {
-  const url = buildOcrUrl();
-  const base64 = getBase64(request);
+  if (!storagePath && !base64) {
+    throw new Error("OCR request missing storagePath or image base64 data.");
+  }
 
-    const payload = {
-    // ✅ send multiple keys so the function definitely finds the content
-    document: base64,
-    base64: base64,
-    fileBase64: base64,
-    imageBase64: base64,
-    content: base64,
-
+  // ✅ Payload supports BOTH styles; backend will choose storagePath if present.
+  const payload: any = {
     mimeType: request.mimeType,
     fileName: request.fileName ?? "upload.jpg",
     documentType: request.documentType ?? "unknown",
     sourceType: request.sourceType ?? "unknown",
   };
 
+  if (storagePath) {
+    payload.storagePath = storagePath;
+  }
 
-  const tryFetch = async (u: string) => {
-    const r = await fetch(u, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const t = await r.text();
-    return { r, t, u };
+  if (base64) {
+    // Send multiple keys so backend always finds content (legacy clients)
+    payload.document = base64;
+    payload.base64 = base64;
+    payload.fileBase64 = base64;
+    payload.imageBase64 = base64;
+    payload.content = base64;
+  }
+
+  const r = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const t = await r.text();
+
+  if (!r.ok) {
+    throw new Error(`OCR request failed (${r.status}) @ ${endpoint}: ${t || ""}`);
+  }
+
+  let json: any = null;
+  try {
+    json = JSON.parse(t);
+  } catch {
+    json = null;
+  }
+
+  const text =
+    String(
+      json?.text ||
+        json?.ocrText ||
+        json?.recognizedText ||
+        json?.rawText ||
+        json?.result?.text ||
+        json?.data?.text ||
+        (json ? "" : t) ||
+        ""
+    ) || "";
+
+  const engine = String(json?.engine || json?.raw?.engine || "") || undefined;
+  const projectId = (json?.meta?.projectId ?? null) as string | null;
+  const region = (json?.meta?.region ?? null) as string | null;
+
+  console.log("[OCR] endpoint =", endpoint);
+  console.log("[OCR] engine   =", engine);
+  console.log("[OCR] project  =", projectId);
+  console.log("[OCR] region   =", region);
+  if (storagePath) console.log("[OCR] storagePath =", storagePath);
+
+  return {
+    text,
+    endpoint,
+    engine,
+    projectId,
+    region,
+    raw: json?.raw ?? json ?? null,
   };
-
-  // ✅ Try primary, then region fallback if it looks like functions URL
-  const candidates: string[] = [url];
-
-  if (looksLikeFirebaseFunctionsUrl(url)) {
-    if (url.includes("https://us-central1-")) candidates.push(swapRegion(url, "us-central1", "us-east1"));
-    if (url.includes("https://us-east1-")) candidates.push(swapRegion(url, "us-east1", "us-central1"));
-  }
-
-  let lastErr: any = null;
-
-  for (const u of candidates) {
-    try {
-      const out = await tryFetch(u);
-
-      if (!out.r.ok) {
-        throw new Error(`OCR request failed (${out.r.status}) @ ${out.u}: ${out.t || ""}`);
-      }
-
-      try {
-        const json = JSON.parse(out.t);
-        return { text: String(json?.text || "") };
-      } catch {
-        return { text: out.t || "" };
-      }
-    } catch (e: any) {
-      lastErr = e;
-      continue;
-    }
-  }
-
-  throw new Error(
-    `OCR network failure. Tried: ${candidates.join(" , ")}. ${
-      lastErr?.message ? String(lastErr.message) : "unknown"
-    }`
-  );
 }

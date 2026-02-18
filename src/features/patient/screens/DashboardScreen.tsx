@@ -5,10 +5,8 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   Linking,
   Alert,
-  Image,
 } from "react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
@@ -28,12 +26,17 @@ import { getDashboardTasks } from "../services/dashboardTasks";
 
 import { vitalsService } from "../../vitals/services/vitalsService";
 import { vitalRiskService } from "../../vitals/services/vitalRiskService";
-import type { PatientVitalsRiskSummary, VitalRiskAssessment } from "../../vitals/types";
+import type {
+  PatientVitalsRiskSummary,
+  VitalRiskAssessment,
+} from "../../vitals/types";
 
-const TEAL = "#0B8E8E"; // keep for icons if you want
-const PROGRESS_BLUE = "#1D4ED8"; // rich iOS-ish blue
+const TEAL = "#0B8E8E";
+const PROGRESS_BLUE = "#1D4ED8";
+const WEB_PORTAL_URL = "https://myhealthvaultai.com/app";
 
-const clamp = (n: number, min = 0, max = 100) => Math.max(min, Math.min(max, n));
+const clamp = (n: number, min = 0, max = 100) =>
+  Math.max(min, Math.min(max, n));
 
 /* -------------------- Visit Recorder Launcher -------------------- */
 
@@ -65,6 +68,25 @@ async function openVisitRecorderPlayStore() {
   }
 }
 
+async function openWebPortal() {
+  try {
+    const can = await Linking.canOpenURL(WEB_PORTAL_URL);
+    if (!can) {
+      Alert.alert(
+        "Cannot open web portal",
+        "Your device can’t open this link right now."
+      );
+      return;
+    }
+    await Linking.openURL(WEB_PORTAL_URL);
+  } catch {
+    Alert.alert(
+      "Cannot open web portal",
+      "Your device can’t open this link right now."
+    );
+  }
+}
+
 /* -------------------- UI bits -------------------- */
 
 function StatusPill({
@@ -88,42 +110,6 @@ function StatusPill({
       <Text style={styles.statusLabel}>{label}</Text>
       <Text style={[styles.statusValue, { color: tint }]}>{value}</Text>
     </View>
-  );
-}
-
-function CopilotOverviewCard({ onPress }: { onPress: () => void }) {
-  return (
-    <Card style={styles.copilotCard}>
-      <TouchableOpacity
-        onPress={onPress}
-        activeOpacity={0.9}
-        style={styles.copilotRow}
-      >
-        <View style={styles.copilotLeft}>
-          <View style={styles.copilotIconWrap}>
-            <Image
-              source={require("../../../../assets/images/copilot-ai.png")}
-              style={styles.copilotIcon}
-              resizeMode="contain"
-            />
-          </View>
-          <Text style={styles.askAiText}>Ask AI</Text>
-        </View>
-
-        <View style={{ flex: 1 }}>
-          <Text style={styles.copilotTitle}>OpenAI Copilot</Text>
-          <Text style={styles.copilotSub}>
-            Ask questions, prep for visits, and understand your health.
-          </Text>
-        </View>
-
-        <Feather
-          name="chevron-right"
-          size={20}
-          color={theme.colors.textSecondary}
-        />
-      </TouchableOpacity>
-    </Card>
   );
 }
 
@@ -189,7 +175,11 @@ function UrgentVitalCard({
 
   return (
     <Card style={styles.urgentCard}>
-      <TouchableOpacity onPress={onPress} activeOpacity={0.9} style={styles.urgentRow}>
+      <TouchableOpacity
+        onPress={onPress}
+        activeOpacity={0.9}
+        style={styles.urgentRow}
+      >
         <View style={[styles.urgentIcon, { backgroundColor: `${tint}18` }]}>
           <Feather
             name={item.level === "red" ? "alert-triangle" : "alert-circle"}
@@ -205,9 +195,51 @@ function UrgentVitalCard({
           </Text>
         </View>
 
-        <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+        <Feather
+          name="chevron-right"
+          size={18}
+          color={theme.colors.textSecondary}
+        />
       </TouchableOpacity>
     </Card>
+  );
+}
+
+function FeatureRow({
+  icon,
+  iconBg,
+  title,
+  subtitle,
+  onPress,
+  rightText,
+}: {
+  icon: keyof typeof Feather.glyphMap;
+  iconBg: string;
+  title: string;
+  subtitle?: string;
+  onPress: () => void;
+  rightText?: string;
+}) {
+  return (
+    <TouchableOpacity onPress={onPress} activeOpacity={0.9} style={styles.featureRow}>
+      <View style={[styles.featureIconWrap, { backgroundColor: iconBg }]}>
+        <Feather name={icon} size={18} color="#0F172A" />
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text style={styles.featureTitle}>{title}</Text>
+        {subtitle ? (
+          <Text style={styles.featureSub} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+
+      <View style={styles.featureRight}>
+        {rightText ? <Text style={styles.featureRightText}>{rightText}</Text> : null}
+        <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -244,14 +276,14 @@ export default function DashboardScreen() {
     navigation.navigate(MainRoutes.PATIENT_PROFILE);
   }, [navigation]);
 
-  // Ask AI → AI Chat
   const goAiChat = useCallback(() => {
     navigation.navigate(MainRoutes.AI_HOME_TAB as any, { screen: MainRoutes.AI_CHAT });
   }, [navigation]);
 
-  // Chart CTA → Chart Setup Intro
   const goChartSetup = useCallback(() => {
-    navigation.navigate(MainRoutes.AI_HOME_TAB as any, { screen: MainRoutes.CHART_SETUP_INTRO });
+    navigation.navigate(MainRoutes.AI_HOME_TAB as any, {
+      screen: MainRoutes.CHART_SETUP_INTRO,
+    });
   }, [navigation]);
 
   const onGoToVitals = useCallback(() => {
@@ -267,7 +299,7 @@ export default function DashboardScreen() {
     if (!opened) {
       Alert.alert(
         "Visit Recorder not installed",
-        "Install Visit Recorder to record visits and share notes into your vault.",
+        "Install Visit Recorder to record visits and unlock AI summaries for your vault.",
         [
           { text: "Cancel", style: "cancel" },
           { text: "Install", onPress: openVisitRecorderPlayStore },
@@ -303,7 +335,6 @@ export default function DashboardScreen() {
     return list.filter((a) => a.level === "red" || a.level === "yellow");
   }, [risk]);
 
-  // Health score from risk numericScore (risk is higher = worse)
   const overallScore = useMemo(() => {
     const a = risk?.assessments ?? [];
     if (!a.length) return 0;
@@ -345,6 +376,9 @@ export default function DashboardScreen() {
   const yellowCount = risk ? risk.assessments.filter((a) => a.level === "yellow").length : 0;
   const greenCount = risk ? risk.assessments.filter((a) => a.level === "green").length : 0;
 
+  const progressLabel = setupPct === 0 ? "Start your chart" : "Chart progress";
+  const progressAction = setupPct === 0 ? "Start" : "Continue";
+
   return (
     <ScreenContainer
       showHeader
@@ -352,38 +386,64 @@ export default function DashboardScreen() {
       headerHideTitleWhenLogo
       headerShowAvatar
       onPressAvatar={goPatientProfile}
-      headerShowSettings
-      onPressSettings={goPatientProfile}
       contentStyle={{ paddingTop: 0 }}
     >
-      <View style={{ height: theme.spacing.md }} />
+      <View style={{ height: theme.spacing.sm }} />
 
-      {/* Chart CTA */}
-      <TouchableOpacity activeOpacity={0.9} onPress={goChartSetup} style={styles.progressStrip}>
-        <View style={styles.progressStripTopRow}>
-          <Text style={styles.progressStripLabel}>
-            {setupPct === 0 ? "Start your chart" : "Chart progress"}
-          </Text>
-
-          <View style={styles.progressStripRight}>
-            <Text style={styles.progressStripPct}>{setupPct}%</Text>
-
-            <View style={styles.progressStripCta}>
-              <Feather name="edit-3" size={14} color="#FFFFFF" />
-              <Text style={styles.progressStripCtaText}>
-                {setupPct === 0 ? "Start" : "Continue"}
-              </Text>
+      {/* Top Welcome / Chart Progress (smaller + no clipping) */}
+      <TouchableOpacity activeOpacity={0.9} onPress={goChartSetup} style={styles.progressCard}>
+        <View style={styles.progressTopRow}>
+          <View style={{ flex: 1, paddingRight: 10 }}>
+            <Text style={styles.welcomeTitle}>Welcome back</Text>
             </View>
+
+          {/* Inside-the-card badge (no clipping) */}
+          <View style={styles.progressPill}>
+            <Text style={styles.progressPillText}>{setupPct}%</Text>
           </View>
         </View>
 
-        <View style={styles.progressStripTrack}>
-          <View style={[styles.progressStripFill, { width: `${setupPct}%` }]} />
+        <View style={styles.progressMidRow}>
+          <Text style={styles.progressLabel}>{progressLabel}</Text>
+
+          <View style={styles.progressCta}>
+            <Feather name="edit-3" size={14} color="#FFFFFF" />
+            <Text style={styles.progressCtaText}>{progressAction}</Text>
+          </View>
+        </View>
+
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${setupPct}%` }]} />
         </View>
       </TouchableOpacity>
 
-      {/* Ask AI (single entry point) */}
-      <CopilotOverviewCard onPress={goAiChat} />
+      {/* Feature Stack */}
+      <Card style={styles.featureStackCard}>
+        <FeatureRow
+          icon="cpu"
+          iconBg="rgba(29, 78, 216, 0.10)"
+          title="OpenAI Copilot"
+          subtitle="Ask questions, prep for visits, and understand your health."
+          onPress={goAiChat}
+        />
+        <View style={styles.rowDivider} />
+        <FeatureRow
+          icon="mic"
+          iconBg="rgba(11, 142, 142, 0.14)"
+          title="Visit Recorder"
+          subtitle="Record visits + get AI summaries (with changes noted)."
+          onPress={onVisitRecorder}
+          rightText="Open"
+        />
+        <View style={styles.rowDivider} />
+        <FeatureRow
+          icon="globe"
+          iconBg="rgba(15, 23, 42, 0.06)"
+          title="Web Portal"
+          subtitle="Open your vault on desktop for easier viewing and uploads."
+          onPress={openWebPortal}
+        />
+      </Card>
 
       {/* Health overview */}
       <Card style={styles.overviewCard}>
@@ -395,7 +455,7 @@ export default function DashboardScreen() {
           </View>
 
           <View style={styles.overviewRight}>
-            <HealthScoreRing score={overallScore} size={90} />
+            <HealthScoreRing score={overallScore} size={86} />
             <Text style={styles.healthMiniLabel}>{scoreLabel}</Text>
           </View>
         </View>
@@ -414,28 +474,40 @@ export default function DashboardScreen() {
         </View>
       </Card>
 
-      {/* Quick actions */}
+      {/* Quick actions (BACK IN A CARD) */}
       <SectionHeader title="Quick actions" />
-      <Card style={styles.actionCard}>
-        <View style={styles.quickRow}>
-          <TouchableOpacity onPress={goPatientProfile} activeOpacity={0.85} style={styles.quickItem}>
-            <Feather name="user" size={18} color={TEAL} />
-            <Text style={styles.quickText}>Demographics</Text>
+      <Card style={styles.quickCard}>
+        <View style={styles.quickGrid}>
+          <TouchableOpacity onPress={goPatientProfile} activeOpacity={0.88} style={styles.quickTile}>
+            <View style={styles.quickIconCircle}>
+              <Feather name="user" size={18} color={TEAL} />
+            </View>
+            <Text style={styles.quickText} numberOfLines={1}>Profile</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={goChartSetup} activeOpacity={0.85} style={styles.quickItem}>
-            <Feather name="edit-3" size={18} color={TEAL} />
-            <Text style={styles.quickText}>Chart</Text>
+          <TouchableOpacity onPress={goChartSetup} activeOpacity={0.88} style={styles.quickTile}>
+            <View style={styles.quickIconCircle}>
+              <Feather name="edit-3" size={18} color={TEAL} />
+            </View>
+            <Text style={styles.quickText} numberOfLines={1}>Chart</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={onVisitRecorder} activeOpacity={0.85} style={styles.quickItem}>
-            <Feather name="mic" size={18} color={TEAL} />
-            <Text style={styles.quickText}>Visit Recorder</Text>
+          <TouchableOpacity onPress={onVisitRecorder} activeOpacity={0.88} style={styles.quickTile}>
+            <View style={styles.quickIconCircle}>
+              <Feather name="mic" size={18} color={TEAL} />
+            </View>
+            <Text style={styles.quickText} numberOfLines={1}>Recorder</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={onGoToVitals} activeOpacity={0.85} style={styles.quickItem}>
-            <Feather name="activity" size={18} color={theme.colors.success ?? theme.colors.brand} />
-            <Text style={styles.quickText}>Add vitals</Text>
+          <TouchableOpacity onPress={onGoToVitals} activeOpacity={0.88} style={styles.quickTile}>
+            <View style={styles.quickIconCircle}>
+              <Feather
+                name="activity"
+                size={18}
+                color={theme.colors.success ?? theme.colors.brand}
+              />
+            </View>
+            <Text style={styles.quickText} numberOfLines={1}>Vitals</Text>
           </TouchableOpacity>
         </View>
       </Card>
@@ -461,7 +533,11 @@ export default function DashboardScreen() {
         <Card style={styles.emptyCard}>
           <TouchableOpacity onPress={onGoToVitals} activeOpacity={0.85} style={styles.emptyRow}>
             <View style={styles.emptyIcon}>
-              <Feather name="check-circle" size={18} color={theme.colors.success ?? theme.colors.brand} />
+              <Feather
+                name="check-circle"
+                size={18}
+                color={theme.colors.success ?? theme.colors.brand}
+              />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.emptyTitle}>No urgent vitals</Text>
@@ -472,14 +548,28 @@ export default function DashboardScreen() {
         </Card>
       )}
 
-      {/* Check-in */}
+      {/* Check-in (more personality) */}
       <SectionHeader title="Check-in" />
       <Text style={styles.sectionSubtitle}>
         Generate a PDF for your visit or a QR code for the clinic to scan.
       </Text>
 
       <Card style={styles.checkinCard}>
-        <Button label="Start check-in" variant="secondary" onPress={onCheckIn} />
+        <View style={styles.checkinTopRow}>
+          <View style={styles.checkinIcon}>
+            <Feather name="clipboard" size={18} color={PROGRESS_BLUE} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.checkinTitle}>Ready for your appointment?</Text>
+            <Text style={styles.checkinSub} numberOfLines={2}>
+              Create a clean, clinic-ready check-in packet in seconds.
+            </Text>
+          </View>
+        </View>
+
+        <View style={{ height: 12 }} />
+
+        <Button label="Start check-in" onPress={onCheckIn} />
       </Card>
 
       <View style={{ height: theme.spacing.xl }} />
@@ -488,108 +578,360 @@ export default function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  progressStrip: {
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
-    borderRadius: theme.radius.lg,
-    backgroundColor: PROGRESS_BLUE,
+  /* Top card */
+  progressCard: {
+    marginHorizontal: theme.spacing.md,
+    borderRadius: 18,
+    backgroundColor: "rgba(29, 78, 216, 0.10)",
     borderWidth: 1,
-    borderColor: "rgba(0,0,0,0.04)",
+    borderColor: "rgba(29, 78, 216, 0.12)",
+    padding: 14,
+    marginBottom: theme.spacing.md,
+  },
+  progressTopRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+  },
+  welcomeTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: theme.colors.text,
+    marginBottom: 4,
+  },
+  welcomeSub: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
+  progressPill: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: PROGRESS_BLUE,
+    minWidth: 54,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  progressPillText: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  progressMidRow: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  progressLabel: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: theme.colors.text,
+  },
+  progressCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: PROGRESS_BLUE,
+  },
+  progressCtaText: {
+    color: "#fff",
+    fontWeight: "900",
+    fontSize: 12,
+  },
+  progressTrack: {
+    marginTop: 12,
+    height: 9,
+    borderRadius: 999,
+    backgroundColor: "rgba(15, 23, 42, 0.10)",
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 999,
+    backgroundColor: PROGRESS_BLUE,
+  },
+
+  /* Feature stack */
+  featureStackCard: {
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+    paddingVertical: 4,
+  },
+  featureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  featureIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  featureTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: theme.colors.text,
+    marginBottom: 2,
+  },
+  featureSub: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
+  featureRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  featureRightText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: theme.colors.brand,
+  },
+  rowDivider: {
+    height: 1,
+    backgroundColor: theme.colors.borderLight ?? "rgba(15, 23, 42, 0.08)",
+    marginHorizontal: 12,
+  },
+
+  /* Overview */
+  overviewCard: {
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+  },
+  overviewTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  overviewLeft: { flex: 1 },
+  overviewRight: { alignItems: "center" },
+
+  bannerLabel: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: theme.colors.textSecondary,
+    textTransform: "uppercase",
+    marginBottom: 6,
+  },
+  bannerHeadline: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: theme.colors.text,
+    marginBottom: 4,
+    lineHeight: 18,
+  },
+  bannerSub: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
+
+  ringCenter: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ringScoreText: { fontSize: 20, fontWeight: "900", color: theme.colors.text },
+  ringScoreLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: theme.colors.textSecondary,
+  },
+  healthMiniLabel: {
+    marginTop: 6,
+    fontSize: 12,
+    fontWeight: "900",
+    color: theme.colors.textSecondary,
+  },
+
+  hairline: {
+    height: 1,
+    backgroundColor: theme.colors.borderLight ?? "rgba(15, 23, 42, 0.08)",
+    marginVertical: theme.spacing.md,
+  },
+
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  statusPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 16,
+    backgroundColor: "rgba(15, 23, 42, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 23, 42, 0.06)",
+    minWidth: 90,
+  },
+  statusLabel: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: theme.colors.textSecondary,
+  },
+  statusValue: { marginTop: 4, fontSize: 18, fontWeight: "900" },
+
+  statusCta: {
+    marginLeft: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(15, 23, 42, 0.06)",
+    backgroundColor: "rgba(255,255,255,0.9)",
+  },
+  statusCtaText: { fontSize: 12, fontWeight: "900", color: theme.colors.brand },
+
+  /* Quick actions */
+  quickCard: {
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+    paddingVertical: 14,
+  },
+  quickGrid: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 10,
+  },
+  quickTile: { width: "23%", alignItems: "center" },
+  quickIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15, 23, 42, 0.04)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 23, 42, 0.06)",
+    marginBottom: 8,
+  },
+  quickText: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: theme.colors.textSecondary,
+    textAlign: "center",
+  },
+
+  /* Urgent vitals */
+  urgentCard: {
+    marginHorizontal: theme.spacing.md,
     marginBottom: theme.spacing.sm,
   },
-  progressStripTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  progressStripLabel: { fontSize: 12, fontWeight: "900", color: "#FFFFFF" },
-  progressStripRight: { alignItems: "flex-end", gap: 6 },
-  progressStripPct: { fontSize: 12, fontWeight: "900", color: "rgba(255,255,255,0.90)" },
-  progressStripCta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.18)",
-  },
-  progressStripCtaText: { fontSize: 12, fontWeight: "900", color: "#FFFFFF" },
-  progressStripTrack: {
-    height: 6,
-    borderRadius: 6,
-    backgroundColor: "rgba(255,255,255,0.35)",
-    overflow: "hidden",
-    marginTop: 10,
-  },
-  progressStripFill: { height: 6, borderRadius: 6, backgroundColor: "#FFFFFF" },
-
-  copilotCard: { marginBottom: theme.spacing.sm, paddingVertical: 12 },
-  copilotRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  copilotLeft: { width: 96, alignItems: "center", justifyContent: "center" },
-  copilotIconWrap: { width: 66, height: 66, borderRadius: 18, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  copilotIcon: { width: 62, height: 62 },
-  askAiText: { marginTop: 1, fontSize: 13, fontWeight: "800", color: theme.colors.text },
-  copilotTitle: { fontSize: 15, fontWeight: "900", color: theme.colors.text, marginBottom: 2 },
-  copilotSub: { fontSize: 12, fontWeight: "700", color: theme.colors.textSecondary, lineHeight: 16, maxWidth: "92%" },
-
-  overviewCard: {},
-  overviewTop: { flexDirection: "row", alignItems: "center" },
-  overviewLeft: { flex: 1, paddingRight: theme.spacing.md },
-  overviewRight: { alignItems: "center", justifyContent: "center" },
-
-  bannerLabel: { fontSize: 12, fontWeight: "900", color: theme.colors.textSecondary, marginBottom: 4 },
-  bannerHeadline: { fontSize: 14, fontWeight: "900", color: theme.colors.text, marginBottom: 4 },
-  bannerSub: { fontSize: 12, fontWeight: "700", color: theme.colors.textSecondary, lineHeight: 16 },
-
-  hairline: { height: 1, backgroundColor: theme.colors.borderLight, marginVertical: theme.spacing.md },
-
-  statusRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  statusPill: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.borderLight,
-    backgroundColor: theme.colors.surface,
-  },
-  statusLabel: { fontSize: 11, fontWeight: "900", color: theme.colors.textSecondary, marginBottom: 4 },
-  statusValue: { fontSize: 16, fontWeight: "900" },
-  statusCta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 14,
-    backgroundColor: theme.colors.brandTint,
-  },
-  statusCtaText: { fontSize: 12, fontWeight: "900", color: theme.colors.text },
-
-  healthMiniLabel: { marginTop: 6, fontSize: 12, fontWeight: "900", color: theme.colors.textSecondary },
-
-  ringCenter: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center" },
-  ringScoreText: { fontSize: 18, fontWeight: "900", color: theme.colors.text },
-  ringScoreLabel: { fontSize: 11, fontWeight: "800", color: theme.colors.textSecondary },
-
-  actionCard: { paddingVertical: theme.spacing.sm },
-  quickRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 10 },
-  quickItem: { width: "48%", paddingVertical: 14, paddingHorizontal: 12, borderRadius: 16, backgroundColor: theme.colors.surface, flexDirection: "row", alignItems: "center", gap: 10 },
-  quickText: { fontSize: 12, fontWeight: "900", color: theme.colors.text },
-
-  urgentCard: { paddingVertical: theme.spacing.sm, marginBottom: theme.spacing.sm },
   urgentRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  urgentIcon: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  urgentIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   urgentTitle: { fontSize: 13, fontWeight: "900", color: theme.colors.text },
-  urgentSub: { fontSize: 12, fontWeight: "700", color: theme.colors.textSecondary, marginTop: 2, lineHeight: 16 },
-  moreLink: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4, marginBottom: theme.spacing.md },
+  urgentSub: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
+
+  loading: {
+    marginHorizontal: theme.spacing.md,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.spacing.md,
+  },
+
+  moreLink: {
+    marginHorizontal: theme.spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    marginBottom: theme.spacing.md,
+  },
   moreLinkText: { fontSize: 12, fontWeight: "900", color: theme.colors.textSecondary },
 
-  emptyCard: { paddingVertical: theme.spacing.sm },
+  emptyCard: { marginHorizontal: theme.spacing.md, marginBottom: theme.spacing.md },
   emptyRow: { flexDirection: "row", alignItems: "center", gap: 12 },
-  emptyIcon: { width: 34, height: 34, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.brandTint },
+  emptyIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(16, 185, 129, 0.10)",
+  },
   emptyTitle: { fontSize: 13, fontWeight: "900", color: theme.colors.text },
-  emptySub: { fontSize: 12, fontWeight: "700", color: theme.colors.textSecondary, marginTop: 2 },
+  emptySub: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
 
-  loading: { marginTop: theme.spacing.sm, marginBottom: theme.spacing.sm, color: theme.colors.textSecondary, fontSize: 12 },
-
-  sectionSubtitle: { color: theme.colors.textSecondary, fontSize: 12, marginBottom: theme.spacing.sm },
-  checkinCard: { paddingVertical: theme.spacing.md },
+  /* Check-in */
+  sectionSubtitle: {
+    marginHorizontal: theme.spacing.md,
+    marginTop: 6,
+    marginBottom: theme.spacing.sm,
+    color: theme.colors.textSecondary,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  checkinCard: {
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.md,
+    paddingVertical: 16,
+  },
+  checkinTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 12,
+  },
+  checkinIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(29, 78, 216, 0.10)",
+    borderWidth: 1,
+    borderColor: "rgba(29, 78, 216, 0.12)",
+  },
+  checkinTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: theme.colors.text,
+    marginBottom: 2,
+  },
+  checkinSub: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.colors.textSecondary,
+    lineHeight: 16,
+  },
 });

@@ -59,6 +59,7 @@ export default function VisitRecorderImportScreen() {
 
       await timelineService.addEvent({
         type: "AI_NOTE",
+        category: "visits",
         summary: (title || "Visit summary").trim(),
         detail: trimmed,
         level: "low",

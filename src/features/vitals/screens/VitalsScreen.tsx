@@ -1,7 +1,15 @@
 // src/features/vitals/screens/VitalsScreen.tsx
 
 import React, { useMemo, useRef } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  Linking,
+} from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { Feather } from "@expo/vector-icons";
 
@@ -25,6 +33,7 @@ type QuickTile =
   | { kind: "bmi"; label: string; icon: keyof typeof Feather.glyphMap };
 
 const LATEST_ORDER: LatestType[] = ["bp", "hr", "spo2", "weight"];
+const WEB_PORTAL_URL = "https://myhealthvaultai.com/app";
 
 /**
  * ✅ 8 tiles (4×2) for “all possibilities”
@@ -41,6 +50,19 @@ const QUICK_TILES: QuickTile[] = [
   { kind: "add", type: "rr", label: "Resp Rate", icon: "cloud" },
   { kind: "bmi", label: "BMI", icon: "percent" },
 ];
+
+async function openWebPortal() {
+  try {
+    const can = await Linking.canOpenURL(WEB_PORTAL_URL);
+    if (!can) {
+      Alert.alert("Cannot open web portal", "Your device can’t open this link right now.");
+      return;
+    }
+    await Linking.openURL(WEB_PORTAL_URL);
+  } catch {
+    Alert.alert("Cannot open web portal", "Your device can’t open this link right now.");
+  }
+}
 
 function safeFeatherIcon(name: any): any {
   const exists = (Feather as any)?.glyphMap?.[name];
@@ -211,6 +233,22 @@ export default function VitalsScreen() {
       scroll
       contentStyle={{ paddingTop: 0 }}
     >
+      {/* ✅ Web Portal (globe icon row, not a big pill/card button) */}
+      <Card style={styles.portalCard}>
+        <TouchableOpacity onPress={openWebPortal} activeOpacity={0.9} style={styles.portalRow}>
+          <View style={styles.portalIconCircle}>
+            <Feather name="globe" size={18} color={theme.colors.text} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.portalTitle}>Web Portal</Text>
+            <Text style={styles.portalSub} numberOfLines={2}>
+              Open your vault on desktop for easier viewing and uploads.
+            </Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
+      </Card>
+
       {/* ---------- LATEST READINGS ---------- */}
       <Card style={styles.latestCard}>
         <View style={styles.latestHeaderRow}>
@@ -270,7 +308,11 @@ export default function VitalsScreen() {
                     <Text style={styles.latestUnit}>{unitShort(type)}</Text>
 
                     <View style={styles.deltaRow}>
-                      <Feather name={arrowIcon(delta.dir) as any} size={14} color={theme.colors.textSecondary} />
+                      <Feather
+                        name={arrowIcon(delta.dir) as any}
+                        size={14}
+                        color={theme.colors.textSecondary}
+                      />
                       <Text style={styles.deltaText}>{delta.text}</Text>
                     </View>
 
@@ -288,7 +330,11 @@ export default function VitalsScreen() {
         <View style={styles.quickHeaderRow}>
           <Text style={styles.quickTitle}>Quick add</Text>
 
-          <TouchableOpacity onPress={() => nav.navigate(MainRoutes.VITAL_TYPE_PICKER)} activeOpacity={0.85} style={styles.allTypesBtn}>
+          <TouchableOpacity
+            onPress={() => nav.navigate(MainRoutes.VITAL_TYPE_PICKER)}
+            activeOpacity={0.85}
+            style={styles.allTypesBtn}
+          >
             <Text style={styles.allTypesText}>All types</Text>
             <Feather name="chevron-right" size={16} color={theme.colors.brand} />
           </TouchableOpacity>
@@ -309,7 +355,12 @@ export default function VitalsScreen() {
                 : undefined;
 
             return (
-              <TouchableOpacity key={`${t.kind}-${t.label}`} onPress={onPress} activeOpacity={0.9} style={styles.tile}>
+              <TouchableOpacity
+                key={`${t.kind}-${t.label}`}
+                onPress={onPress}
+                activeOpacity={0.9}
+                style={styles.tile}
+              >
                 <View style={styles.tileIconCircle}>
                   <Feather name={safeFeatherIcon(t.icon)} size={18} color={theme.colors.brand} />
                 </View>
@@ -361,6 +412,27 @@ export default function VitalsScreen() {
 }
 
 const styles = StyleSheet.create({
+  portalCard: {
+    marginBottom: theme.spacing.md,
+    borderWidth: 1,
+    borderColor: theme.colors.borderLight ?? theme.colors.border,
+  },
+  portalRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  portalIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15, 23, 42, 0.06)",
+  },
+  portalTitle: { fontSize: 14, fontWeight: "900", color: theme.colors.text, marginBottom: 2 },
+  portalSub: { fontSize: 12, fontWeight: "700", color: theme.colors.textSecondary, lineHeight: 16 },
+
   latestCard: { marginBottom: theme.spacing.md },
 
   latestHeaderRow: {
@@ -421,7 +493,6 @@ const styles = StyleSheet.create({
   allTypesBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
   allTypesText: { fontWeight: "900", fontSize: 13, color: theme.colors.brand },
 
-  // ✅ 4 columns
   quickGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: theme.spacing.md },
   tile: { width: "23%", alignItems: "center", paddingVertical: theme.spacing.xs },
   tileIconCircle: {

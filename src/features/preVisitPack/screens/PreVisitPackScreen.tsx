@@ -49,6 +49,7 @@ export default function PreVisitPackScreen() {
 
       await timelineService.addEvent({
         type: "PRE_VISIT_PACK",
+        category: "visits",
         summary: `Pre-Visit Pack (${result.days} days)`,
         detail: result.content,
         level: "info",

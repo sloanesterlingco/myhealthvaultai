@@ -16,6 +16,10 @@ import type { Medication, MedicationInput } from "../types/medicationTypes";
  * ✅ V1 Source of Truth (Medications)
  * Firestore Path:
  *   patients/{uid}/medications/{medicationId}
+ *
+ * Firestore IMPORTANT:
+ * - Firestore rejects `undefined` anywhere in objects.
+ *   So we must strip undefined before setDoc/updateDoc.
  */
 
 const PATHS = {
@@ -45,6 +49,28 @@ function medKey(input: MedicationInput): string {
   return [name, dosage, freq].filter(Boolean).join("|");
 }
 
+/**
+ * Firestore rejects `undefined` anywhere (including nested objects/arrays).
+ * Remove undefined recursively.
+ */
+function stripUndefined<T>(value: T): T {
+  if (Array.isArray(value)) {
+    // @ts-ignore
+    return value.map(stripUndefined).filter((v) => v !== undefined) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const out: any = {};
+    for (const [k, v] of Object.entries(value as any)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefined(v);
+    }
+    return out as T;
+  }
+
+  return value;
+}
+
 export const medicationsService = {
   async getMedications(): Promise<Medication[]> {
     const uid = requireUid();
@@ -59,7 +85,7 @@ export const medicationsService = {
     }));
   },
 
-  // ✅ CHANGED: deterministic id prevents duplicates from AI double-apply
+  // ✅ deterministic id prevents duplicates from AI double-apply
   async addMedication(input: MedicationInput): Promise<string> {
     const uid = requireUid();
     const now = new Date().toISOString();
@@ -69,15 +95,19 @@ export const medicationsService = {
 
     const ref = doc(db, PATHS.patients, uid, PATHS.medications, id);
 
-    await setDoc(
-      ref,
-      {
-        ...input,
-        createdAt: now,
-        updatedAt: now,
-      },
-      { merge: false }
-    );
+    // ✅ Firestore-safe: remove undefined (ex: notes: undefined)
+    // Also allows extra OCR fields (rxNumber, pharmacyPhone, ndc, rawOcrText, etc.)
+    const payload = stripUndefined({
+      ...(input as any),
+
+      // optional safety: ensure notes never undefined if your UI uses it a lot
+      notes: (input as any)?.notes ?? "",
+
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await setDoc(ref, payload, { merge: false });
 
     return id;
   },
@@ -90,13 +120,21 @@ export const medicationsService = {
     if (!medicationId) throw new Error("medicationId is required");
 
     const now = new Date().toISOString();
-
     const ref = doc(db, PATHS.patients, uid, PATHS.medications, medicationId);
 
-    await updateDoc(ref, {
-      ...patch,
+    const payload = stripUndefined({
+      ...(patch as any),
+
+      // If patch includes notes but it's undefined, we drop it.
+      // If you want notes to never be undefined in updates:
+      ...(Object.prototype.hasOwnProperty.call(patch as any, "notes")
+        ? { notes: (patch as any).notes ?? "" }
+        : {}),
+
       updatedAt: now,
     });
+
+    await updateDoc(ref, payload as any);
   },
 
   async deactivateMedication(medicationId: string): Promise<void> {
@@ -104,12 +142,14 @@ export const medicationsService = {
     if (!medicationId) throw new Error("medicationId is required");
 
     const now = new Date().toISOString();
-
     const ref = doc(db, PATHS.patients, uid, PATHS.medications, medicationId);
 
-    await updateDoc(ref, {
-      endDate: now.slice(0, 10),
-      updatedAt: now,
-    });
+    await updateDoc(
+      ref,
+      stripUndefined({
+        endDate: now.slice(0, 10),
+        updatedAt: now,
+      }) as any
+    );
   },
 };

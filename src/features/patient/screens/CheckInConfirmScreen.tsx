@@ -144,11 +144,12 @@ export default function CheckInConfirmScreen({ route, navigation }: Props) {
       try {
         await timelineService.addEvent({
           type: "CHECKIN",
+          category: "exports",
           summary: "Clinic check-in packet generated",
           detail: pdfUrl ? `PDF: ${pdfUrl}` : "PDF generated.",
           level: "low",
           timestamp: Date.now(),
-          meta: { source: "checkin_flow" },
+          meta: { source: "checkin_flow", pdfUrl },
         } as any);
       } catch {
         // no-op alpha
