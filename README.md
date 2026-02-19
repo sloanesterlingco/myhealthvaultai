@@ -1,50 +1,66 @@
-# Welcome to your Expo app 👋
+MyHealthVaultAI (Alpha)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Patient-controlled medication reconciliation with deterministic conflict detection and auditable alert lifecycle tracking.
 
-## Get started
+Current Scope (Alpha)
 
-1. Install dependencies
+Medication list management
 
-   ```bash
-   npm install
-   ```
+Provider-attributed medication instructions (start, stop, continue, change)
 
-2. Start the app
+Append-only medication action history
 
-   ```bash
-   npx expo start
-   ```
+Deterministic medication conflict detection
 
-In the output, you'll find options to open the app in a
+Persistent “Care Plan Change” alerts
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+Patient acknowledgment tracking (visibility only, no clinical recommendation)
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+Daily medication “taken” logging
 
-## Get a fresh project
+Out of Scope (Alpha)
 
-When you're ready, run:
+Drug interaction engines
 
-```bash
-npm run reset-project
-```
+Clinical risk scoring
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Labs or imaging ingestion
 
-## Learn more
+EMR integrations
 
-To learn more about developing your project with Expo, look at the following resources:
+Clinical advice or recommendations
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Architecture
 
-## Join the community
+React Native (Expo + TypeScript)
 
-Join our community of developers creating universal apps.
+Firebase (Firestore + Cloud Functions)
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Append-only medicationActions for auditability
+
+Deterministic rule-based conflict detection
+
+Alert lifecycle: generated → viewed → reviewed
+
+Design Principles
+
+Deterministic and explainable
+
+Advisory-only boundaries
+
+GDPR-friendly patient data isolation
+
+Minimal PHI surface
+
+Auditability through append-only event tracking
+
+Development
+
+Install dependencies:
+
+npm install
+
+
+Start development:
+
+npx expo start
